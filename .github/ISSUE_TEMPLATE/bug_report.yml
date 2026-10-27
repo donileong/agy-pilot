@@ -1,0 +1,44 @@
+name: 🐛 Bug Report
+description: Create a report to help us fix an unexpected error or issue
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this bug!
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe what bug or unexpected behavior occurred.
+      placeholder: Tell us what you see...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this issue?
+      placeholder: |
+        1. Run '...'
+        2. Send message '...'
+        3. See error '...'
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Info
+      description: Operating System, Python version, Antigravity version, etc.
+      placeholder: |
+        - OS: macOS 15.0 / Ubuntu 24.04
+        - Python: 3.12.x
+        - Adapter: Telegram
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: Please copy and paste any relevant logs from `agy-pilot service logs` or terminal.
+      render: shell

@@ -1,0 +1,28 @@
+name: 💡 Feature Request
+description: Suggest an idea or enhancement for Antigravity Pilot
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a new feature or improvement!
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Pain Point
+      description: Is your feature request related to a problem or limitation?
+      placeholder: I am always frustrated when...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution / Ideal Experience
+      description: Describe what you would like to happen or how the feature should behave.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions or workarounds?
