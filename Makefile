@@ -1,4 +1,4 @@
-.PHONY: help init run restart status logs test test-cov lint format sync update clean clean-all install-service uninstall-service
+.PHONY: help init run restart status logs test test-cov lint format pre-commit setup-pre-commit sync update clean clean-all install-service uninstall-service
 
 help:
 	@echo "🛠️  agy-pilot (Antigravity Pilot) Management Commands:"
@@ -15,6 +15,7 @@ help:
 	@echo "  make test-cov          - 📊 Run tests with code coverage report"
 	@echo "  make lint              - 🔍 Check code quality and style with Ruff"
 	@echo "  make format            - 🎨 Auto-format code with Ruff"
+	@echo "  make setup-pre-commit  - 🪝 Install git pre-commit hook"
 	@echo "  make sync              - 📦 Sync dependencies with uv"
 	@echo "  make install-service   - ⚙️  Install and load background daemon"
 	@echo "  make uninstall-service - 🗑️  Stop and remove background daemon"
@@ -55,6 +56,11 @@ lint:
 
 format:
 	uv tool run ruff format .
+
+setup-pre-commit:
+	@chmod +x .git/hooks/pre-commit
+	@uv tool run pre-commit install 2>/dev/null || true
+	@echo "🪝 Pre-commit hook installed successfully."
 
 sync:
 	uv sync
