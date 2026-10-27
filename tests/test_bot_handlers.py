@@ -1,11 +1,13 @@
 from unittest.mock import AsyncMock, MagicMock
-from pathlib import Path
+
 import pytest
 from aiogram.types import CallbackQuery, Chat, File, Message, User, Voice
+
 from agy_pilot.bot import AuthMiddleware, TelegramBridge
 from agy_pilot.config import Config
 from agy_pilot.controller import AntigravityProject, ConversationMetadata
 from agy_pilot.transcript import LastTurnSummary
+
 
 def create_mock_message(user_id=123, text=None, voice=None):
     msg = MagicMock(spec=Message)
@@ -19,9 +21,11 @@ def create_mock_message(user_id=123, text=None, voice=None):
     msg.answer = AsyncMock()
     return msg
 
+
 def get_handler(bridge: TelegramBridge, handler_name: str):
     handlers = [h for h in bridge.dp.message.handlers if hasattr(h, "callback")]
     return next(h.callback for h in handlers if handler_name in h.callback.__name__)
+
 
 @pytest.fixture
 def bridge_setup(tmp_path):
@@ -38,6 +42,7 @@ def bridge_setup(tmp_path):
     bridge.bot = AsyncMock()
     return bridge, mock_controller, mock_store
 
+
 @pytest.mark.asyncio
 async def test_auth_block(bridge_setup):
     bridge, _, _ = bridge_setup
@@ -45,7 +50,10 @@ async def test_auth_block(bridge_setup):
     start_handler = get_handler(bridge, "handle_start")
 
     await start_handler(unauth_msg)
-    unauth_msg.answer.assert_called_with("⛔️ Access Restricted: You are not authorized to use this bot.")
+    unauth_msg.answer.assert_called_with(
+        "⛔️ Access Restricted: You are not authorized to use this bot."
+    )
+
 
 @pytest.mark.asyncio
 async def test_auth_middleware():
@@ -61,10 +69,14 @@ async def test_auth_middleware():
     # 2. Blocked message from stranger
     dummy_handler.reset_mock()
     msg_blocked = create_mock_message(user_id=999)
-    res_blocked = await middleware(dummy_handler, msg_blocked, {"event_from_user": msg_blocked.from_user})
+    res_blocked = await middleware(
+        dummy_handler, msg_blocked, {"event_from_user": msg_blocked.from_user}
+    )
     assert res_blocked is None
     dummy_handler.assert_not_called()
-    msg_blocked.answer.assert_called_with("⛔️ Access Restricted: This bot is private and unauthorized.")
+    msg_blocked.answer.assert_called_with(
+        "⛔️ Access Restricted: This bot is private and unauthorized."
+    )
 
     # 3. Blocked callback query from stranger
     cb_blocked = create_mock_callback_query(user_id=999)
@@ -72,6 +84,7 @@ async def test_auth_middleware():
     assert res_cb is None
     dummy_handler.assert_not_called()
     cb_blocked.answer.assert_called_with("⛔️ Access Restricted: Unauthorized", show_alert=True)
+
 
 @pytest.mark.asyncio
 async def test_start_and_help(bridge_setup):
@@ -87,6 +100,7 @@ async def test_start_and_help(bridge_setup):
     assert "conv-xyz" in args[0]
     assert "Welcome to Antigravity Telegram Bridge" in args[0]
 
+
 @pytest.mark.asyncio
 async def test_new_and_reset(bridge_setup):
     bridge, _, mock_store = bridge_setup
@@ -97,6 +111,7 @@ async def test_new_and_reset(bridge_setup):
     mock_store.set_conversation_id.assert_called_with(None)
     assert msg.answer.called
     assert "Conversation reset" in msg.answer.call_args[0][0]
+
 
 @pytest.mark.asyncio
 async def test_status_command(bridge_setup):
@@ -111,10 +126,13 @@ async def test_status_command(bridge_setup):
 
     # 2. Active conversation
     mock_store.get_conversation_id.return_value = "conv-active"
-    mock_controller.get_conversation_metadata.return_value = ConversationMetadata("conv-active", [], "2026-10-22")
+    mock_controller.get_conversation_metadata.return_value = ConversationMetadata(
+        "conv-active", [], "2026-10-22"
+    )
     msg2 = create_mock_message(user_id=123, text="/status")
     await status_handler(msg2)
     assert "conv-active" in msg2.answer.call_args[0][0]
+
 
 @pytest.mark.asyncio
 async def test_projects_command(bridge_setup):
@@ -135,6 +153,7 @@ async def test_projects_command(bridge_setup):
     await projects_handler(msg2)
     assert "my-proj" in msg2.answer.call_args[0][0]
 
+
 @pytest.mark.asyncio
 async def test_text_handler(bridge_setup):
     bridge, _, _ = bridge_setup
@@ -151,6 +170,7 @@ async def test_text_handler(bridge_setup):
     assert item.user_display_text == "Hello Antigravity"
     assert "Hello Antigravity" in item.prompt_for_agent
     assert item.status_message_id == 77
+
 
 @pytest.mark.asyncio
 async def test_voice_handler(bridge_setup, tmp_path):
@@ -176,6 +196,7 @@ async def test_voice_handler(bridge_setup, tmp_path):
     assert "[Voice Message: " in item.user_display_text
     assert item.status_message_id == 88
 
+
 def create_mock_callback_query(user_id=123, data=""):
     query = MagicMock(spec=CallbackQuery)
     query.from_user = MagicMock(spec=User)
@@ -187,9 +208,11 @@ def create_mock_callback_query(user_id=123, data=""):
     query.message.delete = AsyncMock()
     return query
 
+
 def get_callback_handler(bridge: TelegramBridge):
     handlers = [h for h in bridge.dp.callback_query.handlers if hasattr(h, "callback")]
     return handlers[0].callback if handlers else None
+
 
 @pytest.mark.asyncio
 async def test_callback_query_unauthorized(bridge_setup):
@@ -199,6 +222,7 @@ async def test_callback_query_unauthorized(bridge_setup):
 
     await cb_handler(query)
     query.answer.assert_called_with("⛔️ Unauthorized operation", show_alert=True)
+
 
 @pytest.mark.asyncio
 async def test_callback_query_proj_flow(bridge_setup):
@@ -373,6 +397,7 @@ async def test_handle_text_skill_slash_command(bridge_setup, tmp_path):
     skill_file.write_text("# doc", encoding="utf-8")
 
     from agy_pilot.skills import SkillItem
+
     mock_skill = SkillItem(
         name="research",
         command_name="research",
@@ -400,16 +425,21 @@ async def test_handle_text_skill_slash_command(bridge_setup, tmp_path):
     assert "<USER_REQUEST>" in item.prompt_for_agent
     assert "/research Playwright in Docker" in item.prompt_for_agent
     assert "<ADDITIONAL_METADATA>" in item.prompt_for_agent
-    assert '<SKILL>The user requested you read and use the "research" skill.' in item.prompt_for_agent
+    assert (
+        '<SKILL>The user requested you read and use the "research" skill.' in item.prompt_for_agent
+    )
 
 
 @pytest.mark.asyncio
 async def test_sync_telegram_commands(bridge_setup, tmp_path):
     bridge, _, _ = bridge_setup
     from agy_pilot.skills import SkillItem
+
     skills = {
         "tdd": SkillItem("tdd", "tdd", "Test driven dev", tmp_path / "SKILL1.md", "global"),
-        "code-review": SkillItem("code-review", "code_review", "Code review", tmp_path / "SKILL2.md", "global"),
+        "code-review": SkillItem(
+            "code-review", "code_review", "Code review", tmp_path / "SKILL2.md", "global"
+        ),
     }
     bridge._get_active_skills = AsyncMock(return_value=skills)
 

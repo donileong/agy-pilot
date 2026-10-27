@@ -1,8 +1,6 @@
-import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-import pytest
+from unittest.mock import patch
 
 from agy_pilot.service import (
     LaunchdManager,
@@ -13,7 +11,9 @@ from agy_pilot.service import (
 
 
 def test_get_executable_command(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda cmd: "/usr/local/bin/agy-pilot" if cmd == "agy-pilot" else None)
+    monkeypatch.setattr(
+        "shutil.which", lambda cmd: "/usr/local/bin/agy-pilot" if cmd == "agy-pilot" else None
+    )
     cmd = get_executable_command()
     assert cmd == ["/usr/local/bin/agy-pilot"]
 
@@ -26,7 +26,7 @@ def test_launchd_manager(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     mgr = LaunchdManager()
 
-    with patch("os.system", return_value=0) as mock_sys:
+    with patch("os.system", return_value=0):
         assert mgr.install(auto_start=True) is True
         assert mgr.plist_path.is_file()
         content = mgr.plist_path.read_text()
@@ -60,4 +60,3 @@ def test_get_service_manager():
         assert isinstance(mgr, LaunchdManager)
     else:
         assert isinstance(mgr, SystemdManager)
-

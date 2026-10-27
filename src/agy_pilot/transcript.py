@@ -268,16 +268,14 @@ class StepTracker:
             start_idx = omitted
 
         for i, item in enumerate(self.steps[start_idx:], start=start_idx):
-            is_last = (i + 1 == total)
+            is_last = i + 1 == total
             prefix = "▶" if is_last else "✓"
             out += f"  {prefix} {item.description} `[Step {item.step_index}]`\n"
 
         return out
 
 
-def format_steps_summary(
-    steps: list[ProgressStepItem], elapsed_secs: float | None = None
-) -> str:
+def format_steps_summary(steps: list[ProgressStepItem], elapsed_secs: float | None = None) -> str:
     if not steps:
         return "📋 *No detailed steps recorded for this execution*"
 
@@ -329,8 +327,22 @@ def get_steps_from_transcript(
 def get_transcript_path(conversation_id: str) -> Path:
     home = Path.home()
     candidates = [
-        home / ".gemini" / "antigravity" / "brain" / conversation_id / ".system_generated" / "logs" / "transcript.jsonl",
-        home / ".gemini" / "antigravity-ide" / "brain" / conversation_id / ".system_generated" / "logs" / "transcript.jsonl",
+        home
+        / ".gemini"
+        / "antigravity"
+        / "brain"
+        / conversation_id
+        / ".system_generated"
+        / "logs"
+        / "transcript.jsonl",
+        home
+        / ".gemini"
+        / "antigravity-ide"
+        / "brain"
+        / conversation_id
+        / ".system_generated"
+        / "logs"
+        / "transcript.jsonl",
     ]
     for c in candidates:
         if c.exists():
@@ -355,8 +367,12 @@ def extract_user_prompt(raw: str | None) -> str | None:
     if match:
         cleaned = match.group(1).strip()
     else:
-        cleaned = re.sub(r"<ADDITIONAL_METADATA>.*?</ADDITIONAL_METADATA>", "", raw, flags=re.DOTALL)
-        cleaned = re.sub(r"<USER_SETTINGS_CHANGE>.*?</USER_SETTINGS_CHANGE>", "", cleaned, flags=re.DOTALL)
+        cleaned = re.sub(
+            r"<ADDITIONAL_METADATA>.*?</ADDITIONAL_METADATA>", "", raw, flags=re.DOTALL
+        )
+        cleaned = re.sub(
+            r"<USER_SETTINGS_CHANGE>.*?</USER_SETTINGS_CHANGE>", "", cleaned, flags=re.DOTALL
+        )
         cleaned = cleaned.strip()
     return cleaned if cleaned else None
 
@@ -397,7 +413,9 @@ def get_last_turn_summary(
                         last_assistant_reply = step.content.strip()
                         last_tool_step = None
     except Exception as e:
-        logger.warning("Failed to parse transcript for last turn summary (%s): %s", conversation_id, e)
+        logger.warning(
+            "Failed to parse transcript for last turn summary (%s): %s", conversation_id, e
+        )
         return LastTurnSummary(last_status="empty")
 
     if not last_step:
@@ -431,4 +449,3 @@ def get_last_turn_summary(
         )
 
     return LastTurnSummary(last_status="empty")
-

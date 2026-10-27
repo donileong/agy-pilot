@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 from agy_pilot.adapters.base import BaseIMAdapter
 from agy_pilot.adapters.registry import get_adapter, register_adapter

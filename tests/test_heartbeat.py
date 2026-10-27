@@ -1,9 +1,12 @@
 import asyncio
 from unittest.mock import AsyncMock
+
 import pytest
-from aiogram.enums import ChatAction, ParseMode
+from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramBadRequest
+
 from agy_pilot.heartbeat import StatusHeartbeat
+
 
 @pytest.mark.asyncio
 async def test_heartbeat_loop_and_throttling():
@@ -30,6 +33,7 @@ async def test_heartbeat_loop_and_throttling():
 
     await hb.stop()
     assert hb._task is None
+
 
 @pytest.mark.asyncio
 async def test_heartbeat_markdown_fallback():

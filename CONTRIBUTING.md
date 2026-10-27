@@ -61,6 +61,7 @@ One of the best ways to contribute is by adding support for new Instant Messagin
    ```python
    from agy_pilot.adapters.base import BaseIMAdapter
 
+
    class DiscordAdapter(BaseIMAdapter):
        async def start(self) -> None:
            # Initialize client, register command handlers, and begin event loop
@@ -74,6 +75,7 @@ One of the best ways to contribute is by adding support for new Instant Messagin
    Add it to `src/agy_pilot/adapters/registry.py`:
    ```python
    from agy_pilot.adapters.registry import register_adapter
+
    register_adapter("discord", DiscordAdapter)
    ```
 3. **Write Unit Tests**:

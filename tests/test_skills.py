@@ -1,5 +1,5 @@
 from pathlib import Path
-import pytest
+
 from agy_pilot.skills import (
     SkillDiscovery,
     SkillItem,
@@ -69,7 +69,12 @@ def test_discover_skills_precedence(tmp_path: Path):
     ws_dir = tmp_path / "workspace"
 
     # Setup directories
-    for d in [builtin_dir / "alpha", global_dir / "alpha", global_dir / "beta", ws_dir / ".agents" / "skills" / "beta"]:
+    for d in [
+        builtin_dir / "alpha",
+        global_dir / "alpha",
+        global_dir / "beta",
+        ws_dir / ".agents" / "skills" / "beta",
+    ]:
         d.mkdir(parents=True)
 
     (builtin_dir / "alpha" / "SKILL.md").write_text(

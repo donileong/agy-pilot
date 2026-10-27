@@ -160,7 +160,9 @@ class TelegramAdapter(BaseIMAdapter):
         reply: str,
         reply_markup: InlineKeyboardMarkup | None = None,
     ) -> None:
-        chunks = split_message_chunks(reply, max_chunk_size=4000) or ["(Task completed with no output text)"]
+        chunks = split_message_chunks(reply, max_chunk_size=4000) or [
+            "(Task completed with no output text)"
+        ]
         first_chunk = chunks[0]
         is_single = len(chunks) == 1
         markup_for_first = reply_markup if is_single else None
@@ -230,7 +232,9 @@ class TelegramAdapter(BaseIMAdapter):
                 BotCommand(command="skills", description="Browse available Antigravity skills"),
                 BotCommand(command="projects", description="Browse local projects & conversations"),
                 BotCommand(command="new", description="Reset and start a new conversation"),
-                BotCommand(command="status", description="Show active project and conversation status"),
+                BotCommand(
+                    command="status", description="Show active project and conversation status"
+                ),
                 BotCommand(command="help", description="Show help instructions"),
             ]
 
@@ -269,7 +273,9 @@ class TelegramAdapter(BaseIMAdapter):
         @self.dp.message(Command("start", "help"))
         async def handle_start(message: Message):
             if not self._check_auth(message):
-                await message.answer("⛔️ Access Restricted: You are not authorized to use this bot.")
+                await message.answer(
+                    "⛔️ Access Restricted: You are not authorized to use this bot."
+                )
                 return
 
             current_id = await self.store.get_conversation_id()
@@ -278,7 +284,11 @@ class TelegramAdapter(BaseIMAdapter):
             current_proj = await self.store.get_project_id()
             if not isinstance(current_proj, str):
                 current_proj = None
-            conv_display = current_id if current_id else "None (new conversation will be created on next message)"
+            conv_display = (
+                current_id
+                if current_id
+                else "None (new conversation will be created on next message)"
+            )
             proj_display = "outside-of-project"
             if current_proj:
                 if p := self.controller.get_project(current_proj):
@@ -425,7 +435,9 @@ class TelegramAdapter(BaseIMAdapter):
                 text, kb = build_skills_keyboard(sorted_skills, page=page)
                 await query.answer()
                 if query.message:
-                    await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                    await query.message.edit_text(
+                        text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                    )
                 return
 
             if data.startswith("skill_sel:"):
@@ -445,7 +457,9 @@ class TelegramAdapter(BaseIMAdapter):
                 text, kb = build_skill_detail_keyboard(skill, return_page=return_page)
                 await query.answer()
                 if query.message:
-                    await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                    await query.message.edit_text(
+                        text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                    )
                 return
 
             if data.startswith("proj_page:"):
@@ -457,7 +471,9 @@ class TelegramAdapter(BaseIMAdapter):
                 text, kb = build_projects_keyboard(projects, page=page)
                 await query.answer()
                 if query.message:
-                    await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                    await query.message.edit_text(
+                        text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                    )
                 return
 
             if data.startswith("proj_sel:"):
@@ -469,7 +485,9 @@ class TelegramAdapter(BaseIMAdapter):
                 text, kb = build_project_actions_keyboard(project)
                 await query.answer()
                 if query.message:
-                    await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                    await query.message.edit_text(
+                        text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                    )
                 return
 
             if data.startswith("proj_new:"):
@@ -497,10 +515,14 @@ class TelegramAdapter(BaseIMAdapter):
                     await query.answer("Project not found", show_alert=True)
                     return
                 items, total = self.controller.list_conversations(proj_id, limit=5, offset=page * 5)
-                text, kb = build_conversations_keyboard(project, items, page=page, total_count=total)
+                text, kb = build_conversations_keyboard(
+                    project, items, page=page, total_count=total
+                )
                 await query.answer()
                 if query.message:
-                    await query.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                    await query.message.edit_text(
+                        text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                    )
                 return
 
             if data.startswith("conv_sel:"):
@@ -522,7 +544,9 @@ class TelegramAdapter(BaseIMAdapter):
                 await query.answer("Conversation switched!")
                 if query.message:
                     try:
-                        await query.message.edit_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+                        await query.message.edit_text(
+                            msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN
+                        )
                     except TelegramBadRequest:
                         await query.message.edit_text(msg, reply_markup=kb)
                 return
@@ -589,7 +613,9 @@ class TelegramAdapter(BaseIMAdapter):
                         except Exception:
                             pass
                 else:
-                    await query.answer("Submission failed, please retry or confirm on desktop", show_alert=True)
+                    await query.answer(
+                        "Submission failed, please retry or confirm on desktop", show_alert=True
+                    )
                 return
 
             if data.startswith("steps:") or data.startswith("trace:"):
@@ -747,10 +773,11 @@ class TelegramAdapter(BaseIMAdapter):
                 self.queue.task_done()
 
     async def _process_item(self, item: QueueItem) -> None:
-        logger.info("Processing queued item for user %d: %s", item.user_id, item.user_display_text[:50])
+        logger.info(
+            "Processing queued item for user %d: %s", item.user_id, item.user_display_text[:50]
+        )
         await self.store.log_message(item.user_id, "user", item.user_display_text)
         start_time = time.monotonic()
-        msg_type = "voice" if "[Voice Message:" in item.user_display_text else "text"
         step_count = 0
 
         heartbeat = StatusHeartbeat(
@@ -777,7 +804,9 @@ class TelegramAdapter(BaseIMAdapter):
         try:
             if current_conv_id:
                 after_step = self.controller.get_last_step_index(current_conv_id)
-                heartbeat.update_status("⚡️ *Appending to conversation...*\n💭 Reasoning & analyzing...")
+                heartbeat.update_status(
+                    "⚡️ *Appending to conversation...*\n💭 Reasoning & analyzing..."
+                )
                 self.controller.send_message(
                     current_conv_id, item.prompt_for_agent, target_project_id
                 )
@@ -787,7 +816,9 @@ class TelegramAdapter(BaseIMAdapter):
                 if current_project_id:
                     if p := self.controller.get_project(current_project_id):
                         proj_name = f" ({p.display_name})"
-                heartbeat.update_status(f"🆕 *Creating new conversation{proj_name}...*\n💭 Planning task...")
+                heartbeat.update_status(
+                    f"🆕 *Creating new conversation{proj_name}...*\n💭 Planning task..."
+                )
                 conv_id = self.controller.new_conversation(
                     prompt=item.prompt_for_agent,
                     project_id=target_project_id,
@@ -795,7 +826,11 @@ class TelegramAdapter(BaseIMAdapter):
                     title="Telegram Interaction",
                 )
                 await self.store.set_conversation_id(conv_id)
-                logger.info("Created new Antigravity conversation: %s in project: %s", conv_id, target_project_id)
+                logger.info(
+                    "Created new Antigravity conversation: %s in project: %s",
+                    conv_id,
+                    target_project_id,
+                )
                 after_step = 0
         except Exception as e:
             elapsed = time.monotonic() - start_time

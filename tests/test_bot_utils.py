@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from aiogram.exceptions import TelegramBadRequest
+
 from agy_pilot.bot import (
     QueueItem,
     TelegramBridge,
@@ -13,10 +14,12 @@ from agy_pilot.config import Config
 from agy_pilot.controller import AntigravityProject, ConversationItem
 from agy_pilot.transcript import ToolCall, TranscriptStep
 
+
 def test_split_short_message():
     msg = "Hello, world!"
     chunks = split_message_chunks(msg, 100)
     assert chunks == ["Hello, world!"]
+
 
 def test_split_long_multiline_message():
     line1 = "a" * 60
@@ -27,6 +30,7 @@ def test_split_long_multiline_message():
     assert line1 in chunks[0]
     assert line2 in chunks[1]
 
+
 def test_split_giant_line():
     giant = "x" * 250
     chunks = split_message_chunks(giant, 100)
@@ -34,6 +38,7 @@ def test_split_giant_line():
     assert len(chunks[0]) == 100
     assert len(chunks[1]) == 100
     assert len(chunks[2]) == 50
+
 
 @pytest.mark.asyncio
 async def test_process_item_existing_conversation(tmp_path):
@@ -48,7 +53,15 @@ async def test_process_item_existing_conversation(tmp_path):
     mock_controller.get_last_step_index.return_value = 0
     mock_controller.send_message.return_value = None
 
-    async def fake_wait(conversation_id, after_step_index, timeout_secs, progress_callback, step_callback, *args, **kwargs):
+    async def fake_wait(
+        conversation_id,
+        after_step_index,
+        timeout_secs,
+        progress_callback,
+        step_callback,
+        *args,
+        **kwargs,
+    ):
         # Simulate step callback with tool calls
         step = TranscriptStep(
             step_index=1,
@@ -86,6 +99,7 @@ async def test_process_item_existing_conversation(tmp_path):
     assert "View Execution Steps" in markup.inline_keyboard[0][0].text
     assert markup.inline_keyboard[0][0].callback_data == "steps:conv-123:0"
 
+
 @pytest.mark.asyncio
 async def test_process_item_new_conversation(tmp_path):
     config = Config(
@@ -119,6 +133,7 @@ async def test_process_item_new_conversation(tmp_path):
     mock_store.set_conversation_id.assert_called_with("brand-new-conv")
     bridge.bot.send_message.assert_called_with(123, "Answer for new conversation")
 
+
 @pytest.mark.asyncio
 async def test_process_item_error_handling(tmp_path):
     config = Config(
@@ -150,10 +165,10 @@ async def test_process_item_error_handling(tmp_path):
     args, kwargs = bridge.bot.edit_message_text.call_args
     assert "Task launch failed" in kwargs["text"]
 
+
 def test_build_projects_keyboard():
     projects = [
-        AntigravityProject(f"proj{i}", [f"file:///repo{i}"], "2026-10-23", i)
-        for i in range(12)
+        AntigravityProject(f"proj{i}", [f"file:///repo{i}"], "2026-10-23", i) for i in range(12)
     ]
     # Page 0 (items 0..4)
     text0, kb0 = build_projects_keyboard(projects, page=0, page_size=5)
@@ -166,6 +181,7 @@ def test_build_projects_keyboard():
     assert "Page 3/3" in text2
     assert len(kb2.inline_keyboard) == 4  # 2 items + nav + close
 
+
 def test_build_project_actions_keyboard():
     project = AntigravityProject("proj-test", ["file:///my-app"], "2026-10-23", 5)
     text, kb = build_project_actions_keyboard(project)
@@ -175,6 +191,7 @@ def test_build_project_actions_keyboard():
     assert kb.inline_keyboard[0][0].callback_data == "proj_new:proj-test"
     assert kb.inline_keyboard[1][0].callback_data == "conv_page:proj-test:0"
     assert kb.inline_keyboard[2][0].callback_data == "proj_page:0"
+
 
 def test_build_conversations_keyboard():
     project = AntigravityProject("proj-test", ["file:///my-app"], "2026-10-23", 10)

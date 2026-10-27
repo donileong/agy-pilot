@@ -34,12 +34,11 @@ def get_adapter(
     # Lazy-register default built-in adapters if not already present
     if normalized_name == "telegram" and "telegram" not in _ADAPTER_REGISTRY:
         from .telegram import TelegramAdapter
+
         register_adapter("telegram", TelegramAdapter)
 
     factory = _ADAPTER_REGISTRY.get(normalized_name)
     if not factory:
         available = ", ".join(_ADAPTER_REGISTRY.keys()) or "telegram"
-        raise ValueError(
-            f"Unsupported IM adapter '{name}'. Available adapters: {available}"
-        )
+        raise ValueError(f"Unsupported IM adapter '{name}'. Available adapters: {available}")
     return factory(config, controller, store)

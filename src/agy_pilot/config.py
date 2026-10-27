@@ -92,7 +92,9 @@ class Config:
         bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 
         # Parse user IDs from TELEGRAM_ALLOWED_USER_IDS
-        raw_ids_str = os.getenv("TELEGRAM_ALLOWED_USER_IDS") or os.getenv("TELEGRAM_ALLOWED_USER_ID", "")
+        raw_ids_str = os.getenv("TELEGRAM_ALLOWED_USER_IDS") or os.getenv(
+            "TELEGRAM_ALLOWED_USER_ID", ""
+        )
         allowed_ids: list[int] = []
         if raw_ids_str:
             for item in raw_ids_str.replace(";", ",").split(","):

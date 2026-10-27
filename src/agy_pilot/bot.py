@@ -1,9 +1,9 @@
-from __future__ import annotations
+"""Telegram adapter facade.
 
-"""Telegram adapter facade preserved for backward compatibility.
-
-New code should import directly from `agy_pilot.adapters.telegram`.
+Import directly from `agy_pilot.adapters.telegram`.
 """
+
+from __future__ import annotations
 
 from .adapters.telegram import (
     AuthMiddleware,

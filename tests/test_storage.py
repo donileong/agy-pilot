@@ -1,5 +1,7 @@
 import pytest
+
 from agy_pilot.storage import SessionStore
+
 
 @pytest.mark.asyncio
 async def test_session_store_conversation_id(tmp_path):
@@ -26,6 +28,7 @@ async def test_session_store_conversation_id(tmp_path):
     assert await store.get_project_id() is None
 
     await store.close()
+
 
 @pytest.mark.asyncio
 async def test_session_store_message_logging(tmp_path):

@@ -58,7 +58,8 @@ def build_project_actions_keyboard(
     buttons = [
         [
             InlineKeyboardButton(
-                text="➕ New Conversation in Project", callback_data=f"proj_new:{project.project_id}"
+                text="➕ New Conversation in Project",
+                callback_data=f"proj_new:{project.project_id}",
             )
         ],
         [
@@ -134,8 +135,16 @@ def build_skills_keyboard(
         "Send `/<command> <arguments>` in chat to invoke, or click below for details:\n",
     ]
     for s in current_slice:
-        desc_snip = s.description[:35] + "..." if len(s.description) > 35 else (s.description or "No description")
-        scope_badge = "🏠 Workspace" if s.scope == "workspace" else ("🌐 Global" if s.scope == "global" else "📦 Builtin")
+        desc_snip = (
+            s.description[:35] + "..."
+            if len(s.description) > 35
+            else (s.description or "No description")
+        )
+        scope_badge = (
+            "🏠 Workspace"
+            if s.scope == "workspace"
+            else ("🌐 Global" if s.scope == "global" else "📦 Builtin")
+        )
         text_lines.append(f"• `/{s.command_name}` ({scope_badge}) - {desc_snip}")
 
     text = "\n".join(text_lines)
@@ -187,11 +196,7 @@ def build_skill_detail_keyboard(
         f"Send directly in chat: `/{skill.command_name} <task instructions>`"
     )
     buttons = [
-        [
-            InlineKeyboardButton(
-                text="🔙 Back to Skills", callback_data=f"skill_page:{return_page}"
-            )
-        ],
+        [InlineKeyboardButton(text="🔙 Back to Skills", callback_data=f"skill_page:{return_page}")],
         [InlineKeyboardButton(text="❌ Close Details", callback_data="skill_close")],
     ]
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -203,8 +208,7 @@ def format_switch_message_and_keyboard(
     summary: LastTurnSummary,
 ) -> tuple[str, InlineKeyboardMarkup | None]:
     base_header = (
-        f"✅ *Switched to conversation!*\n"
-        f"• Conversation ID: `{conv_id}`{proj_display}\n\n"
+        f"✅ *Switched to conversation!*\n• Conversation ID: `{conv_id}`{proj_display}\n\n"
     )
 
     card_lines = []
@@ -214,7 +218,11 @@ def format_switch_message_and_keyboard(
         card_lines.append("━━━━━━━━━━━━━━━")
         card_lines.append("⏮️ *Previous Context*")
         if summary.user_prompt:
-            first_line = summary.user_prompt.splitlines()[0] if summary.user_prompt.splitlines() else summary.user_prompt
+            first_line = (
+                summary.user_prompt.splitlines()[0]
+                if summary.user_prompt.splitlines()
+                else summary.user_prompt
+            )
             prompt_snip = f"{first_line[:60]}..." if len(first_line) > 60 else first_line
             card_lines.append(f"👤 *User:* {prompt_snip}")
         if summary.assistant_reply:
@@ -227,7 +235,11 @@ def format_switch_message_and_keyboard(
         card_lines.append("━━━━━━━━━━━━━━━")
         card_lines.append("⏮️ *Previous Context*")
         if summary.user_prompt:
-            first_line = summary.user_prompt.splitlines()[0] if summary.user_prompt.splitlines() else summary.user_prompt
+            first_line = (
+                summary.user_prompt.splitlines()[0]
+                if summary.user_prompt.splitlines()
+                else summary.user_prompt
+            )
             prompt_snip = f"{first_line[:60]}..." if len(first_line) > 60 else first_line
             card_lines.append(f"👤 *User:* {prompt_snip}")
         tool_desc = summary.last_tool_name or "Unknown tool"
@@ -237,14 +249,20 @@ def format_switch_message_and_keyboard(
     elif summary.last_status == "pending_reply":
         card_lines.append("━━━━━━━━━━━━━━━")
         if summary.user_prompt:
-            first_line = summary.user_prompt.splitlines()[0] if summary.user_prompt.splitlines() else summary.user_prompt
+            first_line = (
+                summary.user_prompt.splitlines()[0]
+                if summary.user_prompt.splitlines()
+                else summary.user_prompt
+            )
             prompt_snip = f"{first_line[:60]}..." if len(first_line) > 60 else first_line
             card_lines.append(f"👤 *Last Prompt:* {prompt_snip}")
         card_lines.append("💭 *Assistant reply pending*")
         card_lines.append("━━━━━━━━━━━━━━━\n")
 
     else:
-        card_lines.append("_(No previous messages in this conversation. Send a message to start.)_\n")
+        card_lines.append(
+            "_(No previous messages in this conversation. Send a message to start.)_\n"
+        )
 
     footer = "Subsequent text or voice messages will append to this conversation."
     card_body = "\n".join(card_lines)

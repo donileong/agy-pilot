@@ -170,10 +170,14 @@ class LaunchdManager(BaseServiceManager):
 
     def status(self) -> ServiceStatus:
         if not self.plist_path.is_file():
-            return ServiceStatus(installed=False, running=False, service_type="launchd", details="Not installed")
+            return ServiceStatus(
+                installed=False, running=False, service_type="launchd", details="Not installed"
+            )
 
         try:
-            out = subprocess.check_output(["launchctl", "list"], text=True, stderr=subprocess.DEVNULL)
+            out = subprocess.check_output(
+                ["launchctl", "list"], text=True, stderr=subprocess.DEVNULL
+            )
             for line in out.splitlines():
                 parts = line.strip().split()
                 if len(parts) >= 3 and parts[2] == SERVICE_LABEL:
@@ -283,9 +287,11 @@ WantedBy=default.target
 
     def status(self) -> ServiceStatus:
         if not self.unit_path.is_file():
-            return ServiceStatus(installed=False, running=False, service_type="systemd", details="Not installed")
+            return ServiceStatus(
+                installed=False, running=False, service_type="systemd", details="Not installed"
+            )
         res = os.system(f"systemctl --user is-active --quiet {SYSTEMD_SERVICE_NAME}")
-        running = (res == 0)
+        running = res == 0
         return ServiceStatus(
             installed=True,
             running=running,

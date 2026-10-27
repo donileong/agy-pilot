@@ -1,5 +1,5 @@
-import pytest
 from agy_pilot.controller import inject_headless_constraints
+
 
 def test_inject_headless_constraints():
     user_prompt = "Refactor the database queries."

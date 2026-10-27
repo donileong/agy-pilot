@@ -112,7 +112,9 @@ def test_build_interaction_keyboard():
         question="Select an environment",
         options=[
             QuestionOption(index=0, text="Dev"),
-            QuestionOption(index=1, text="Very long environment name that needs truncation for button display"),
+            QuestionOption(
+                index=1, text="Very long environment name that needs truncation for button display"
+            ),
         ],
     )
     text, kb = build_interaction_keyboard(prompt, "conv-abc")
@@ -140,7 +142,9 @@ def test_send_user_interaction_success(tmp_path):
         mock_res.status = 200
         mock_urlopen.return_value.__enter__.return_value = mock_res
 
-        success = controller.send_user_interaction("conv-123", step_index=15, selected_option_index=1)
+        success = controller.send_user_interaction(
+            "conv-123", step_index=15, selected_option_index=1
+        )
         assert success is True
 
         args, kwargs = mock_urlopen.call_args
@@ -151,7 +155,9 @@ def test_send_user_interaction_success(tmp_path):
         assert payload["cascadeId"] == "conv-123"
         assert payload["interaction"]["stepIndex"] == 16
         assert payload["interaction"]["interaction"]["case"] == "askQuestion"
-        assert payload["interaction"]["interaction"]["value"]["responses"][0]["selectedOptionIds"] == ["1"]
+        assert payload["interaction"]["interaction"]["value"]["responses"][0][
+            "selectedOptionIds"
+        ] == ["1"]
 
 
 def test_send_user_interaction_missing_hub(tmp_path):
@@ -185,7 +191,9 @@ async def test_wait_for_model_reply_triggers_interaction_callback(tmp_path):
         hub_csrf_token=None,
     )
 
-    log_dir = tmp_path / ".gemini" / "antigravity" / "brain" / "conv-test" / ".system_generated" / "logs"
+    log_dir = (
+        tmp_path / ".gemini" / "antigravity" / "brain" / "conv-test" / ".system_generated" / "logs"
+    )
     log_dir.mkdir(parents=True, exist_ok=True)
     t_file = log_dir / "transcript.jsonl"
 

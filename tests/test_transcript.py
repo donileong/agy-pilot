@@ -1,13 +1,14 @@
 import json
 from pathlib import Path
-import pytest
+
 from agy_pilot.transcript import (
+    StepTracker,
     ToolCall,
     TranscriptStep,
-    StepTracker,
     format_tool_call,
     get_transcript_path,
 )
+
 
 def test_parse_step_with_string_thinking():
     raw = {
@@ -17,7 +18,7 @@ def test_parse_step_with_string_thinking():
         "status": "DONE",
         "content": "Finished reading the file.",
         "thinking": "Let's review the contents carefully.",
-        "tool_calls": []
+        "tool_calls": [],
     }
     step = TranscriptStep.from_dict(raw)
     assert step.step_index == 142
@@ -27,6 +28,7 @@ def test_parse_step_with_string_thinking():
     assert step.content == "Finished reading the file."
     assert step.is_final_reply() == "Finished reading the file."
 
+
 def test_parse_step_with_dict_thinking():
     raw = {
         "step_index": 143,
@@ -35,7 +37,7 @@ def test_parse_step_with_dict_thinking():
         "status": "DONE",
         "content": "Done",
         "thinking": {"text": "Thinking in structured format."},
-        "tool_calls": [{"name": "read_file"}]
+        "tool_calls": [{"name": "read_file"}],
     }
     step = TranscriptStep.from_dict(raw)
     assert step.step_index == 143
@@ -44,6 +46,7 @@ def test_parse_step_with_dict_thinking():
     assert len(step.tool_calls) == 1
     # Has tools, so is_final_reply should be None
     assert step.is_final_reply() is None
+
 
 def test_thinking_edge_cases():
     step_none = TranscriptStep(thinking=None)
@@ -59,6 +62,7 @@ def test_thinking_edge_cases():
     step_dict_notext = TranscriptStep(thinking={"other": 123})
     assert step_dict_notext.has_thinking() is True
     assert "123" in step_dict_notext.get_thinking_text()
+
 
 def test_format_tool_calls():
     # Explicit toolSummary
@@ -99,6 +103,7 @@ def test_format_tool_calls():
     tc7 = ToolCall(name="custom_action", args={})
     assert format_tool_call(tc7) == "custom_action"
 
+
 def test_step_tracker_and_live_markdown(tmp_path):
     log_file = tmp_path / "transcript.jsonl"
     tracker = StepTracker(log_file, initial_after_index=0)
@@ -108,11 +113,22 @@ def test_step_tracker_and_live_markdown(tmp_path):
 
     # Add 5 steps to test folding of > 4 steps
     steps = [
-        TranscriptStep(step_index=1, source="MODEL", step_type="PLANNER_RESPONSE", thinking="Thinking 1"),
-        TranscriptStep(step_index=2, source="MODEL", step_type="PLANNER_RESPONSE", tool_calls=[ToolCall(name="read_file", args={"Path": "a.txt"})]),
+        TranscriptStep(
+            step_index=1, source="MODEL", step_type="PLANNER_RESPONSE", thinking="Thinking 1"
+        ),
+        TranscriptStep(
+            step_index=2,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[ToolCall(name="read_file", args={"Path": "a.txt"})],
+        ),
         TranscriptStep(step_index=3, source="USER", step_type="GENERIC"),
-        TranscriptStep(step_index=4, source="MODEL", step_type="PLANNER_RESPONSE", thinking="Thinking 4"),
-        TranscriptStep(step_index=5, source="MODEL", step_type="PLANNER_RESPONSE", content="Answering"),
+        TranscriptStep(
+            step_index=4, source="MODEL", step_type="PLANNER_RESPONSE", thinking="Thinking 4"
+        ),
+        TranscriptStep(
+            step_index=5, source="MODEL", step_type="PLANNER_RESPONSE", content="Answering"
+        ),
     ]
 
     for s in steps:
@@ -121,6 +137,7 @@ def test_step_tracker_and_live_markdown(tmp_path):
     md = tracker.format_live_markdown(elapsed_secs=10)
     assert "completed previous 1 steps" in md
     assert "▶ 🤖 Generating response `[Step 5]`" in md
+
 
 def test_get_transcript_path(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -153,15 +170,33 @@ def test_get_last_turn_summary(tmp_path):
     from agy_pilot.transcript import get_last_turn_summary
 
     # 1. Non-existent file
-    summary_empty = get_last_turn_summary("non_existent_conv", path_override=tmp_path / "none.jsonl")
+    summary_empty = get_last_turn_summary(
+        "non_existent_conv", path_override=tmp_path / "none.jsonl"
+    )
     assert summary_empty.last_status == "empty"
 
     # 2. Complete turn with long reply
     t_file = tmp_path / "transcript.jsonl"
     long_reply = "A" * 500
     lines = [
-        json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "<USER_REQUEST>What is Python?</USER_REQUEST>"}),
-        json.dumps({"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "content": long_reply, "tool_calls": []}),
+        json.dumps(
+            {
+                "step_index": 0,
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "content": "<USER_REQUEST>What is Python?</USER_REQUEST>",
+            }
+        ),
+        json.dumps(
+            {
+                "step_index": 1,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "content": long_reply,
+                "tool_calls": [],
+            }
+        ),
     ]
     t_file.write_text("\n".join(lines), encoding="utf-8")
 
@@ -174,8 +209,23 @@ def test_get_last_turn_summary(tmp_path):
 
     # 3. Running tool turn
     lines_tool = [
-        json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "<USER_REQUEST>Search for bugs</USER_REQUEST>"}),
-        json.dumps({"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "tool_calls": [{"name": "run_command", "args": {"CommandLine": "pytest"}}]}),
+        json.dumps(
+            {
+                "step_index": 0,
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "content": "<USER_REQUEST>Search for bugs</USER_REQUEST>",
+            }
+        ),
+        json.dumps(
+            {
+                "step_index": 1,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "tool_calls": [{"name": "run_command", "args": {"CommandLine": "pytest"}}],
+            }
+        ),
     ]
     t_file.write_text("\n".join(lines_tool), encoding="utf-8")
     summary_tool = get_last_turn_summary("conv2", path_override=t_file)
@@ -185,7 +235,14 @@ def test_get_last_turn_summary(tmp_path):
 
     # 4. Pending reply turn
     lines_pending = [
-        json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "Just asked"}),
+        json.dumps(
+            {
+                "step_index": 0,
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "content": "Just asked",
+            }
+        ),
     ]
     t_file.write_text("\n".join(lines_pending), encoding="utf-8")
     summary_pending = get_last_turn_summary("conv3", path_override=t_file)
@@ -212,8 +269,7 @@ def test_format_steps_summary():
 
     # Many items (>40)
     many_items = [
-        ProgressStepItem(step_index=i, description=f"Step description {i}")
-        for i in range(1, 55)
+        ProgressStepItem(step_index=i, description=f"Step description {i}") for i in range(1, 55)
     ]
     res_many = format_steps_summary(many_items)
     assert "54 steps" in res_many
@@ -227,10 +283,29 @@ def test_get_steps_from_transcript(tmp_path):
 
     t_file = tmp_path / "transcript.jsonl"
     lines = [
-        json.dumps({"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "hi"}),
-        json.dumps({"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "thinking": "plan"}),
-        json.dumps({"step_index": 2, "source": "MODEL", "type": "PLANNER_RESPONSE", "tool_calls": [{"name": "read_file", "args": {"Path": "a.txt"}}]}),
-        json.dumps({"step_index": 3, "source": "MODEL", "type": "PLANNER_RESPONSE", "status": "DONE", "content": "Done"}),
+        json.dumps(
+            {"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT", "content": "hi"}
+        ),
+        json.dumps(
+            {"step_index": 1, "source": "MODEL", "type": "PLANNER_RESPONSE", "thinking": "plan"}
+        ),
+        json.dumps(
+            {
+                "step_index": 2,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "tool_calls": [{"name": "read_file", "args": {"Path": "a.txt"}}],
+            }
+        ),
+        json.dumps(
+            {
+                "step_index": 3,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "content": "Done",
+            }
+        ),
     ]
     t_file.write_text("\n".join(lines), encoding="utf-8")
 
@@ -248,5 +323,3 @@ def test_get_steps_from_transcript(tmp_path):
 
     # Non-existent file
     assert get_steps_from_transcript("c2", path_override=tmp_path / "nonexistent.jsonl") == []
-
-

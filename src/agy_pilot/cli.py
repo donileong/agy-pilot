@@ -32,7 +32,9 @@ def init_configuration() -> None:
     print("  3. BotFather will provide an HTTP API token (e.g., 123456789:ABCdef...).")
 
     current_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    token_prompt = f"Enter your Bot Token [{current_token}]: " if current_token else "Enter your Bot Token: "
+    token_prompt = (
+        f"Enter your Bot Token [{current_token}]: " if current_token else "Enter your Bot Token: "
+    )
 
     while True:
         try:
@@ -52,8 +54,14 @@ def init_configuration() -> None:
     print("  2. It will reply with your numeric User ID (e.g., 12345678).")
     print("  3. You can enter one ID, or multiple IDs separated by commas.")
 
-    current_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS") or os.getenv("TELEGRAM_ALLOWED_USER_ID", "")
-    id_prompt = f"Enter Telegram User ID(s) [{current_ids}]: " if current_ids else "Enter Telegram User ID(s): "
+    current_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS") or os.getenv(
+        "TELEGRAM_ALLOWED_USER_ID", ""
+    )
+    id_prompt = (
+        f"Enter Telegram User ID(s) [{current_ids}]: "
+        if current_ids
+        else "Enter Telegram User ID(s): "
+    )
 
     while True:
         try:
@@ -70,7 +78,9 @@ def init_configuration() -> None:
         if parsed_ids and all(s.isdigit() for s in parsed_ids):
             user_ids_str = ",".join(parsed_ids)
             break
-        print("❌ Invalid input. Please enter numeric user IDs separated by commas (e.g. 12345678, 87654321).")
+        print(
+            "❌ Invalid input. Please enter numeric user IDs separated by commas (e.g. 12345678, 87654321)."
+        )
 
     # Save to user config directory
     DEFAULT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -92,7 +102,9 @@ def init_configuration() -> None:
     # Step 3: Background service option
     print("\n[Step 3/3] Background Service Setup:")
     try:
-        enable_service = input("Do you want to enable automatic background startup now? (Y/n): ").strip().lower()
+        enable_service = (
+            input("Do you want to enable automatic background startup now? (Y/n): ").strip().lower()
+        )
     except (KeyboardInterrupt, EOFError):
         enable_service = "n"
 
@@ -130,7 +142,11 @@ def clean_resources(all_data: bool = False, force: bool = False) -> None:
     if all_data:
         if not force:
             try:
-                confirm = input("⚠️  Delete database, saved sessions, downloads, and config? (y/N): ").strip().lower()
+                confirm = (
+                    input("⚠️  Delete database, saved sessions, downloads, and config? (y/N): ")
+                    .strip()
+                    .lower()
+                )
             except (KeyboardInterrupt, EOFError):
                 confirm = "n"
             if confirm not in ("y", "yes"):
@@ -175,7 +191,9 @@ def update_application() -> None:
             print("Upgrading via uv tool...")
             res_uv = os.system("uv tool upgrade agy-pilot")
             if res_uv != 0:
-                os.system("uv tool install --reinstall git+https://github.com/donileong/agy-pilot.git")
+                os.system(
+                    "uv tool install --reinstall git+https://github.com/donileong/agy-pilot.git"
+                )
         elif shutil.which("pipx"):
             print("Upgrading via pipx...")
             os.system("pipx upgrade agy-pilot")
@@ -205,14 +223,18 @@ def main() -> None:
         help="Action to perform on background service",
     )
     svc_parser.add_argument("-f", "--follow", action="store_true", help="Follow service logs")
-    svc_parser.add_argument("-n", "--lines", type=int, default=30, help="Number of log lines to show")
+    svc_parser.add_argument(
+        "-n", "--lines", type=int, default=30, help="Number of log lines to show"
+    )
 
     # Subcommand: init
     subparsers.add_parser("init", help="Run interactive onboarding wizard")
 
     # Subcommand: clean
     clean_parser = subparsers.add_parser("clean", help="Clean service, logs, and cache")
-    clean_parser.add_argument("--all", action="store_true", help="Delete config and databases as well")
+    clean_parser.add_argument(
+        "--all", action="store_true", help="Delete config and databases as well"
+    )
     clean_parser.add_argument("-f", "--force", action="store_true", help="Skip confirmation prompt")
 
     # Subcommand: update
@@ -274,7 +296,9 @@ def main() -> None:
         print("⚠️  No Telegram Bot Token configured.")
         if sys.stdin.isatty():
             try:
-                run_wizard = input("Would you like to run the setup wizard now? (Y/n): ").strip().lower()
+                run_wizard = (
+                    input("Would you like to run the setup wizard now? (Y/n): ").strip().lower()
+                )
             except (KeyboardInterrupt, EOFError):
                 run_wizard = "n"
             if run_wizard in ("", "y", "yes"):
@@ -295,29 +319,6 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-
-    logging.info("Starting agy-pilot (adapter=%s)...", adapter_name)
-    controller = Antigravity2Controller.discover()
-    store = SessionStore(config.db_path)
-    adapter = get_adapter(
-        adapter_name,
-        config=config,
-        controller=controller,
-        store=store,
-    )
-
-    try:
-        asyncio.run(adapter.start())
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Shutting down agy-pilot...")
-
-
-if __name__ == "__main__":
-    main()
-
-
-if __name__ == "__main__":
-    main()
 
     logging.info("Starting agy-pilot (adapter=%s)...", adapter_name)
     controller = Antigravity2Controller.discover()

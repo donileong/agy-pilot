@@ -40,9 +40,7 @@ def normalize_command_name(name: str) -> str:
     return clean[:32]
 
 
-def sanitize_description_for_telegram(
-    desc: str, fallback_name: str, max_len: int = 50
-) -> str:
+def sanitize_description_for_telegram(desc: str, fallback_name: str, max_len: int = 50) -> str:
     """Format description for Telegram BotCommand menu (short single line, max 50 chars)."""
     one_line = " ".join(desc.split()).strip()
     if not one_line:
@@ -141,9 +139,7 @@ class SkillDiscovery:
         return skills
 
     @classmethod
-    def _scan_directory(
-        cls, root: Path, scope: str, out_skills: dict[str, SkillItem]
-    ) -> None:
+    def _scan_directory(cls, root: Path, scope: str, out_skills: dict[str, SkillItem]) -> None:
         if not root.is_dir():
             return
 
@@ -173,7 +169,7 @@ def wrap_skill_prompt(skill: SkillItem, user_query: str) -> str:
         f"<ADDITIONAL_METADATA>\n"
         f"The user has mentioned some items in the form @[ITEM]. Here is extra information about the items that were mentioned by the user, in the order that they appear:\n\n"
         f"/{skill.name} is a [Slash Command]:\n"
-        f"<SKILL>The user requested you read and use the \"{skill.name}\" skill. "
+        f'<SKILL>The user requested you read and use the "{skill.name}" skill. '
         f"The path to the skill file is:\n{skill.path.resolve()}</SKILL>\n"
         f"</ADDITIONAL_METADATA>"
     )

@@ -123,9 +123,7 @@ class Antigravity2Controller:
         self.hub_csrf_token = new_csrf
         return new_hub, new_csrf
 
-    def run_agentapi(
-        self, args: list[str], project_id: str | None = None
-    ) -> dict[str, Any]:
+    def run_agentapi(self, args: list[str], project_id: str | None = None) -> dict[str, Any]:
         try:
             return self._execute_agentapi_once(args, project_id)
         except Exception as e:
@@ -313,11 +311,7 @@ class Antigravity2Controller:
 
     def get_conversation_metadata(self, conversation_id: str) -> ConversationMetadata:
         val = self.run_agentapi(["get-conversation-metadata", conversation_id])
-        meta_node = (
-            val.get("response", {})
-            .get("conversationMetadata", {})
-            .get("metadata", {})
-        )
+        meta_node = val.get("response", {}).get("conversationMetadata", {}).get("metadata", {})
         created_at = meta_node.get("createdAt", "")
         workspace_uris = meta_node.get("workspaceUris", [])
         return ConversationMetadata(
@@ -339,18 +333,12 @@ class Antigravity2Controller:
         args.append(prompt)
 
         res = self.run_agentapi(args, project_id)
-        conv_id = (
-            res.get("response", {})
-            .get("newConversation", {})
-            .get("conversationId")
-        )
+        conv_id = res.get("response", {}).get("newConversation", {}).get("conversationId")
         if not conv_id:
             raise RuntimeError(f"Failed to obtain conversationId from response: {res}")
         return str(conv_id)
 
-    def send_message(
-        self, recipient_id: str, content: str, project_id: str | None = None
-    ) -> None:
+    def send_message(self, recipient_id: str, content: str, project_id: str | None = None) -> None:
         self.run_agentapi(["send-message", recipient_id, content], project_id)
 
     def get_trajectory_id(self, conversation_id: str) -> str | None:
@@ -407,7 +395,9 @@ class Antigravity2Controller:
                 else:
                     break
         except Exception as e:
-            logger.warning("Error getting trajectory_id for conversation %s: %s", conversation_id, e)
+            logger.warning(
+                "Error getting trajectory_id for conversation %s: %s", conversation_id, e
+            )
         return None
 
     def send_user_interaction(
@@ -485,7 +475,10 @@ class Antigravity2Controller:
                     e.code,
                     err_body,
                 )
-                if "input not registered for step" in err_body and target_step != candidate_steps[-1]:
+                if (
+                    "input not registered for step" in err_body
+                    and target_step != candidate_steps[-1]
+                ):
                     continue
                 return False
             except Exception as e:

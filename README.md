@@ -214,6 +214,7 @@ To implement a new instant messaging adapter (e.g. Discord or Slack):
    ```python
    from agy_pilot.adapters.base import BaseIMAdapter
 
+
    class DiscordAdapter(BaseIMAdapter):
        async def start(self) -> None:
            # Initialize client and start event loop
@@ -226,6 +227,7 @@ To implement a new instant messaging adapter (e.g. Discord or Slack):
 2. Register the adapter in `src/agy_pilot/adapters/registry.py`:
    ```python
    from agy_pilot.adapters.registry import register_adapter
+
    register_adapter("discord", DiscordAdapter)
    ```
 3. Run with `--adapter discord` or set `AGY_ADAPTER=discord`.
