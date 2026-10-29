@@ -453,7 +453,200 @@ async def test_sync_telegram_commands(bridge_setup, tmp_path):
     assert "skills" in cmd_names
     assert "projects" in cmd_names
     assert "new" in cmd_names
+    assert "cancel" in cmd_names
 
     # Skill commands
     assert "tdd" in cmd_names
     assert "code_review" in cmd_names
+
+
+@pytest.mark.asyncio
+async def test_skill_command_without_arguments_prompts_input(bridge_setup, tmp_path):
+    bridge, _, _ = bridge_setup
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text("# doc", encoding="utf-8")
+
+    from aiogram.types import ForceReply
+
+    from agy_pilot.skills import SkillItem
+
+    mock_skill = SkillItem(
+        name="research",
+        command_name="research",
+        description="Deep dive research",
+        path=skill_file,
+        scope="global",
+    )
+    bridge._get_active_skills = AsyncMock(return_value={"research": mock_skill})
+
+    text_handler = get_handler(bridge, "handle_text")
+    msg = create_mock_message(user_id=123, text="/research")
+
+    await text_handler(msg)
+
+    # Execution queue should be empty (not executed immediately)
+    assert bridge.queue.empty()
+    # ForceReply message should be sent to the user
+    bridge.bot.send_message.assert_called_once()
+    call_args, call_kwargs = bridge.bot.send_message.call_args
+    assert "Skill Selected: research" in call_args[1]
+    assert isinstance(call_kwargs.get("reply_markup"), ForceReply)
+    # Pending skill should be recorded
+    pending = bridge._get_pending_skill(123)
+    assert pending is not None
+    assert pending.name == "research"
+
+
+@pytest.mark.asyncio
+async def test_pending_skill_followup_message_flow(bridge_setup, tmp_path):
+    bridge, _, _ = bridge_setup
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text("# doc", encoding="utf-8")
+
+    from agy_pilot.skills import SkillItem
+
+    mock_skill = SkillItem(
+        name="tdd",
+        command_name="tdd",
+        description="Test driven dev",
+        path=skill_file,
+        scope="global",
+    )
+    bridge._pending_skills[123] = (mock_skill, 1000000000.0)
+
+    import time
+    from unittest.mock import patch
+
+    with patch.object(time, "time", return_value=1000000001.0):
+        text_handler = get_handler(bridge, "handle_text")
+        msg = create_mock_message(user_id=123, text="Write tests for payment service")
+
+        await text_handler(msg)
+
+        # Status response
+        assert msg.answer.called
+        assert "Activating skill *tdd*" in msg.answer.call_args[0][0]
+
+        # Queue item has skill prompt wrapped
+        assert not bridge.queue.empty()
+        item = await bridge.queue.get()
+        assert item.user_display_text == "💡 /tdd Write tests for payment service"
+        assert "<USER_REQUEST>" in item.prompt_for_agent
+        assert "/tdd Write tests for payment service" in item.prompt_for_agent
+
+        # Pending skill state cleared
+        assert bridge._get_pending_skill(123) is None
+
+
+@pytest.mark.asyncio
+async def test_callback_query_skill_use(bridge_setup, tmp_path):
+    bridge, _, _ = bridge_setup
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text("# doc", encoding="utf-8")
+
+    from agy_pilot.skills import SkillItem
+
+    mock_skill = SkillItem(
+        name="research",
+        command_name="research",
+        description="Deep dive research",
+        path=skill_file,
+        scope="global",
+    )
+    bridge._get_active_skills = AsyncMock(return_value={"research": mock_skill})
+
+    cb_handler = bridge.dp.callback_query.handlers[0].callback
+    q_use = create_mock_callback_query(user_id=123, data="skill_use:research")
+
+    await cb_handler(q_use)
+
+    # Deletes previous details message and sends ForceReply
+    assert q_use.message.delete.called
+    bridge.bot.send_message.assert_called_once()
+    assert "Skill Selected: research" in bridge.bot.send_message.call_args[0][1]
+
+    # Pending skill state set
+    assert bridge._get_pending_skill(123) is not None
+    assert bridge._get_pending_skill(123).name == "research"
+
+
+@pytest.mark.asyncio
+async def test_cancel_command(bridge_setup, tmp_path):
+    bridge, _, _ = bridge_setup
+    cancel_handler = get_handler(bridge, "handle_cancel")
+
+    # 1. Nothing to cancel
+    msg_nothing = create_mock_message(user_id=123, text="/cancel")
+    await cancel_handler(msg_nothing)
+    assert "Nothing to cancel" in msg_nothing.answer.call_args[0][0]
+
+    # 2. Cancel pending skill
+    from agy_pilot.skills import SkillItem
+
+    mock_skill = SkillItem(
+        name="research",
+        command_name="research",
+        description="Deep dive research",
+        path=tmp_path / "SKILL.md",
+        scope="global",
+    )
+    bridge._pending_skills[123] = (mock_skill, 1000000000.0)
+
+    import time
+    from unittest.mock import patch
+
+    with patch.object(time, "time", return_value=1000000001.0):
+        msg_cancel = create_mock_message(user_id=123, text="/cancel")
+        await cancel_handler(msg_cancel)
+        assert "Skill selection cancelled" in msg_cancel.answer.call_args[0][0]
+        assert bridge._get_pending_skill(123) is None
+
+
+@pytest.mark.asyncio
+async def test_pending_skill_command_interrupt(bridge_setup, tmp_path):
+    bridge, _, _ = bridge_setup
+    from agy_pilot.skills import SkillItem
+
+    mock_skill = SkillItem(
+        name="research",
+        command_name="research",
+        description="Deep dive research",
+        path=tmp_path / "SKILL.md",
+        scope="global",
+    )
+    bridge._pending_skills[123] = (mock_skill, 1000000000.0)
+
+    import time
+    from unittest.mock import patch
+
+    with patch.object(time, "time", return_value=1000000001.0):
+        text_handler = get_handler(bridge, "handle_text")
+        # User sends a normal prompt that starts with a slash or system command
+        msg_cmd = create_mock_message(user_id=123, text="/custom_command_xyz")
+        await text_handler(msg_cmd)
+
+        # Pending skill should have been cleared
+        assert bridge._get_pending_skill(123) is None
+
+
+@pytest.mark.asyncio
+async def test_pending_skill_timeout(bridge_setup, tmp_path):
+    bridge, _, _ = bridge_setup
+    from agy_pilot.skills import SkillItem
+
+    mock_skill = SkillItem(
+        name="research",
+        command_name="research",
+        description="Deep dive research",
+        path=tmp_path / "SKILL.md",
+        scope="global",
+    )
+    # Set pending skill timestamp to 500 seconds ago
+    bridge._pending_skills[123] = (mock_skill, 1000.0)
+
+    import time
+    from unittest.mock import patch
+
+    with patch.object(time, "time", return_value=1500.0):
+        assert bridge._get_pending_skill(123) is None
+        assert 123 not in bridge._pending_skills

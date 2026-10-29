@@ -193,9 +193,11 @@ def build_skill_detail_keyboard(
         f"*Description:*\n"
         f"{skill.description or 'No description provided.'}\n\n"
         f"👉 *Usage:*\n"
-        f"Send directly in chat: `/{skill.command_name} <task instructions>`"
+        f"Send directly in chat: `/{skill.command_name} <task instructions>`\n"
+        f"Or tap below to select and enter instructions:"
     )
     buttons = [
+        [InlineKeyboardButton(text="🚀 Use this Skill", callback_data=f"skill_use:{skill.name}")],
         [InlineKeyboardButton(text="🔙 Back to Skills", callback_data=f"skill_page:{return_page}")],
         [InlineKeyboardButton(text="❌ Close Details", callback_data="skill_close")],
     ]

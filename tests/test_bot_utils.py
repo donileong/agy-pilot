@@ -8,6 +8,7 @@ from agy_pilot.bot import (
     build_conversations_keyboard,
     build_project_actions_keyboard,
     build_projects_keyboard,
+    build_skill_detail_keyboard,
     split_message_chunks,
 )
 from agy_pilot.config import Config
@@ -205,3 +206,29 @@ def test_build_conversations_keyboard():
     assert kb.inline_keyboard[0][0].callback_data == "conv_sel:c0"
     assert kb.inline_keyboard[0][0].text == "💬 Topic 0"
     assert kb.inline_keyboard[5][1].callback_data == "conv_page:proj-test:1"  # Next page
+
+
+def test_build_skill_detail_keyboard(tmp_path):
+
+    from agy_pilot.skills import SkillItem
+
+    skill = SkillItem(
+        name="research",
+        command_name="research",
+        description="Investigate a question against high-trust primary sources",
+        path=tmp_path / "SKILL.md",
+        scope="global",
+    )
+    text, kb = build_skill_detail_keyboard(skill, return_page=1)
+    assert "Skill Details: research" in text
+    assert "/research" in text
+    assert "Global Skill" in text
+
+    # Verify buttons: Use this Skill, Back, Close
+    assert len(kb.inline_keyboard) == 3
+    assert kb.inline_keyboard[0][0].text == "🚀 Use this Skill"
+    assert kb.inline_keyboard[0][0].callback_data == "skill_use:research"
+    assert kb.inline_keyboard[1][0].text == "🔙 Back to Skills"
+    assert kb.inline_keyboard[1][0].callback_data == "skill_page:1"
+    assert kb.inline_keyboard[2][0].text == "❌ Close Details"
+    assert kb.inline_keyboard[2][0].callback_data == "skill_close"

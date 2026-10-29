@@ -16,6 +16,7 @@ SYSTEM_COMMANDS = {
     "status",
     "projects",
     "skills",
+    "cancel",
 }
 
 

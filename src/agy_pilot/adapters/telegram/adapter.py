@@ -16,6 +16,7 @@ from aiogram.types import (
     BotCommand,
     BotCommandScopeChat,
     CallbackQuery,
+    ForceReply,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -58,6 +59,8 @@ from .keyboards import (
 from .middleware import AuthMiddleware
 
 logger = logging.getLogger(__name__)
+
+SKILL_PENDING_TIMEOUT_SECONDS: float = 300.0
 
 
 def split_message_chunks(text: str, max_chunk_size: int = 4000) -> list[str]:
@@ -135,8 +138,37 @@ class TelegramAdapter(BaseIMAdapter):
         self._worker_task: asyncio.Task | None = None
         self._pending_interactions: dict[str, InteractionPrompt] = {}
         self._traces: dict[str, tuple[str, int, list[ProgressStepItem], float | None]] = {}
+        self._pending_skills: dict[int, tuple[SkillItem, float]] = {}
 
         self._register_handlers()
+
+    def _get_pending_skill(self, user_id: int) -> SkillItem | None:
+        if user_id not in self._pending_skills:
+            return None
+        skill, ts = self._pending_skills[user_id]
+        if time.time() - ts > SKILL_PENDING_TIMEOUT_SECONDS:
+            del self._pending_skills[user_id]
+            return None
+        return skill
+
+    def _clear_pending_skill(self, user_id: int) -> None:
+        self._pending_skills.pop(user_id, None)
+
+    async def _prompt_for_skill_input(self, chat_id: int, user_id: int, skill: SkillItem) -> None:
+        self._pending_skills[user_id] = (skill, time.time())
+        placeholder = f"Enter task for {skill.name}..."[:64]
+        desc_line = f"\n📝 _{skill.description}_\n" if skill.description else ""
+        msg = (
+            f"🎯 *Skill Selected: {skill.name}* (`/{skill.command_name}`)"
+            f"{desc_line}\n"
+            f"Please reply to this message with your task instructions (or send /cancel to abort):"
+        )
+        await self.bot.send_message(
+            chat_id,
+            msg,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=ForceReply(selective=True, input_field_placeholder=placeholder),
+        )
 
     def _check_auth(self, message: Message) -> bool:
         user = message.from_user
@@ -236,9 +268,11 @@ class TelegramAdapter(BaseIMAdapter):
                 BotCommand(
                     command="status", description="Show active project and conversation status"
                 ),
+                BotCommand(command="cancel", description="Cancel pending skill input or action"),
                 BotCommand(command="help", description="Show help instructions"),
             ]
 
+            base_count = len(commands)
             registered_cmd_names = {c.command for c in commands}
             sorted_skills = sorted(active_skills.values(), key=lambda s: s.name)
             total_chars = sum(len(c.command) + len(c.description) for c in commands)
@@ -264,7 +298,7 @@ class TelegramAdapter(BaseIMAdapter):
             logger.info(
                 "Successfully synchronized %d Telegram commands (skills: %d) for %d user(s)",
                 len(commands),
-                len(registered_cmd_names) - 5,
+                len(registered_cmd_names) - base_count,
                 len(self.config.allowed_user_ids),
             )
         except Exception as e:
@@ -307,6 +341,7 @@ class TelegramAdapter(BaseIMAdapter):
                 "• `/projects` - Interactively browse projects and switch conversations\n"
                 "• `/new` or `/reset` - Reset current conversation\n"
                 "• `/status` - Show environment and session status\n"
+                "• `/cancel` - Cancel pending skill selection\n"
                 "• `/help` - Show help instructions\n"
                 "• `/<skill_name>` - Invoke a specific skill (e.g. `/research explore topic`)"
             )
@@ -461,6 +496,28 @@ class TelegramAdapter(BaseIMAdapter):
                     await query.message.edit_text(
                         text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN
                     )
+                return
+
+            if data.startswith("skill_use:"):
+                skill_name = data.split(":", 1)[1]
+                skills_dict = await self._get_active_skills()
+                skill = skills_dict.get(skill_name)
+                if not skill:
+                    for s in skills_dict.values():
+                        if s.command_name == skill_name:
+                            skill = s
+                            break
+                if not skill:
+                    await query.answer("Skill not found", show_alert=True)
+                    return
+                await query.answer()
+                chat_id = query.message.chat.id if query.message else query.from_user.id
+                if query.message:
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                await self._prompt_for_skill_input(chat_id, query.from_user.id, skill)
                 return
 
             if data.startswith("proj_page:"):
@@ -696,15 +753,25 @@ class TelegramAdapter(BaseIMAdapter):
                 return
 
             user_id = message.from_user.id if message.from_user else 0
+            pending_skill = self._get_pending_skill(user_id)
+            if pending_skill:
+                self._clear_pending_skill(user_id)
+
             status_msg = await message.answer("📥 Downloading voice message...")
 
             try:
                 abs_path = await self._download_voice_file(voice, message.message_id)
-                prompt = (
+                voice_text = (
                     f"The user sent a voice message. The audio file has been saved locally at: {abs_path}.\n"
                     "Please inspect or process this audio file with your tools, and respond to the user."
                 )
-                prompt_with_constraints = inject_headless_constraints(prompt)
+                if pending_skill:
+                    prompt_text = wrap_skill_prompt(pending_skill, voice_text)
+                    prompt_with_constraints = inject_headless_constraints(prompt_text)
+                    user_display = f"💡 /{pending_skill.name} [Voice Message: {abs_path.name}]"
+                else:
+                    prompt_with_constraints = inject_headless_constraints(voice_text)
+                    user_display = f"[Voice Message: {abs_path.name}]"
 
                 await self.bot.edit_message_text(
                     chat_id=message.chat.id,
@@ -715,7 +782,7 @@ class TelegramAdapter(BaseIMAdapter):
                 item = QueueItem(
                     chat_id=message.chat.id,
                     user_id=user_id,
-                    user_display_text=f"[Voice Message: {abs_path.name}]",
+                    user_display_text=user_display,
                     prompt_for_agent=prompt_with_constraints,
                     status_message_id=status_msg.message_id,
                 )
@@ -728,6 +795,17 @@ class TelegramAdapter(BaseIMAdapter):
                     text=f"❌ Voice download failed: {e}",
                 )
 
+        @self.dp.message(Command("cancel"))
+        async def handle_cancel(message: Message):
+            if not self._check_auth(message):
+                return
+            user_id = message.from_user.id if message.from_user else 0
+            if self._get_pending_skill(user_id):
+                self._clear_pending_skill(user_id)
+                await message.answer("❌ Skill selection cancelled.")
+                return
+            await message.answer("Nothing to cancel.")
+
         @self.dp.message(F.text)
         async def handle_text(message: Message):
             if not self._check_auth(message):
@@ -739,10 +817,36 @@ class TelegramAdapter(BaseIMAdapter):
 
             user_id = message.from_user.id if message.from_user else 0
 
-            # Check if this message invokes an Antigravity skill slash command
+            # 1. Check if user has a pending skill awaiting task instructions
+            if pending_skill := self._get_pending_skill(user_id):
+                if text.startswith("/"):
+                    # User entered a command instead, cancel pending skill and let command proceed
+                    self._clear_pending_skill(user_id)
+                else:
+                    self._clear_pending_skill(user_id)
+                    prompt_text = wrap_skill_prompt(pending_skill, text)
+                    prompt = inject_headless_constraints(prompt_text)
+                    user_display = f"💡 /{pending_skill.name} {text}".strip()
+                    status_header = f"💡 Activating skill *{pending_skill.name}*..."
+                    status_msg = await message.answer(status_header, parse_mode=ParseMode.MARKDOWN)
+                    item = QueueItem(
+                        chat_id=message.chat.id,
+                        user_id=user_id,
+                        user_display_text=user_display,
+                        prompt_for_agent=prompt,
+                        status_message_id=status_msg.message_id,
+                    )
+                    await self.queue.put(item)
+                    return
+
+            # 2. Check if this message invokes an Antigravity skill slash command
             active_skills = await self._get_active_skills()
             if match := match_skill_command(text, active_skills):
                 skill, query = match
+                if not query.strip():
+                    # Empty query -> Prompt user for instructions instead of executing empty task
+                    await self._prompt_for_skill_input(message.chat.id, user_id, skill)
+                    return
                 prompt_text = wrap_skill_prompt(skill, query)
                 prompt = inject_headless_constraints(prompt_text)
                 user_display = f"💡 /{skill.name} {query}".strip()
