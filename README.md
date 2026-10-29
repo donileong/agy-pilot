@@ -1,5 +1,6 @@
 # agy-pilot (Antigravity Pilot)
 
+[![PyPI - Version](https://img.shields.io/pypi/v/agy-pilot)](https://pypi.org/project/agy-pilot/)
 [![CI](https://github.com/donileong/agy-pilot/actions/workflows/ci.yml/badge.svg)](https://github.com/donileong/agy-pilot/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -74,11 +75,14 @@
 Install `agy-pilot` as a standalone global tool using [uv](https://github.com/astral-sh/uv):
 
 ```bash
-# Install directly from git repository
-uv tool install git+https://github.com/donileong/agy-pilot.git
-
-# Or install from PyPI (when published)
+# Install via uv tool (recommended)
 uv tool install agy-pilot
+
+# Or install via standard pip
+pip install agy-pilot
+
+# Or install directly from git repository
+uv tool install git+https://github.com/donileong/agy-pilot.git
 ```
 
 #### Option B: From Source (For Contributors)

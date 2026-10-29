@@ -39,6 +39,7 @@ Homepage = "https://github.com/donileong/agy-pilot"
 Repository = "https://github.com/donileong/agy-pilot.git"
 Issues = "https://github.com/donileong/agy-pilot/issues"
 Documentation = "https://github.com/donileong/agy-pilot#readme"
+PyPI = "https://pypi.org/project/agy-pilot/"
 
 [project.scripts]
 agy-pilot = "agy_pilot.cli:main"
