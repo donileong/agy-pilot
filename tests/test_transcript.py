@@ -323,3 +323,160 @@ def test_get_steps_from_transcript(tmp_path):
 
     # Non-existent file
     assert get_steps_from_transcript("c2", path_override=tmp_path / "nonexistent.jsonl") == []
+
+
+def test_extract_run_recap_with_touched_files():
+    from agy_pilot.transcript import ToolCall, TranscriptStep, extract_run_recap
+
+    steps = [
+        TranscriptStep(
+            step_index=1,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[
+                ToolCall(name="write_file", args={"Path": "src/foo.py", "Content": "print(1)"})
+            ],
+        ),
+        TranscriptStep(
+            step_index=2,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[ToolCall(name="read_file", args={"Path": "src/read_only.py"})],
+        ),
+        TranscriptStep(
+            step_index=3,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[
+                ToolCall(
+                    name="edit_file", args={"Path": "src/bar.py", "Target": "a", "Replacement": "b"}
+                )
+            ],
+        ),
+    ]
+
+    recap = extract_run_recap(steps, duration_seconds=84.0)
+    assert recap.step_count == 3
+    assert recap.duration_seconds == 84.0
+    assert len(recap.touched_files) == 2
+    assert recap.touched_files[0].path == "src/foo.py"
+    assert recap.touched_files[0].action in ("created", "modified")
+    assert recap.touched_files[1].path == "src/bar.py"
+    assert recap.touched_files[1].action == "modified"
+
+    md = recap.format_markdown()
+    assert "⚡️ *Run Recap* · 2 files touched · 3 steps · 1m 24s" in md
+    assert "📝 *Touched Files (2)*" in md
+    assert "`src/foo.py`" in md
+    assert "`src/bar.py`" in md
+
+
+def test_extract_run_recap_read_only_and_duration():
+    from agy_pilot.transcript import ToolCall, TranscriptStep, extract_run_recap, format_duration
+
+    assert format_duration(15) == "15s"
+    assert format_duration(75) == "1m 15s"
+    assert format_duration(3665) == "1h 1m"
+
+    steps = [
+        TranscriptStep(
+            step_index=1,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[ToolCall(name="read_file", args={"Path": "src/main.py"})],
+        ),
+        TranscriptStep(
+            step_index=2,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[ToolCall(name="run_command", args={"CommandLine": "pytest"})],
+        ),
+    ]
+
+    recap = extract_run_recap(steps, duration_seconds=18.0)
+    assert recap.step_count == 2
+    assert recap.touched_files == []
+    md = recap.format_markdown()
+    assert "⚡️ *Run Recap* · 2 steps · 18s · _read-only (no files modified)_" in md
+
+
+def test_extract_run_recap_file_lifecycle_and_workspace_normalization(tmp_path):
+    from agy_pilot.transcript import ToolCall, TranscriptStep, extract_run_recap
+
+    ws_dir = tmp_path / "workspace"
+    ws_dir.mkdir()
+    file_a = ws_dir / "src" / "alpha.py"
+    file_b = ws_dir / "src" / "beta.py"
+
+    steps = [
+        # Created
+        TranscriptStep(
+            step_index=1,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[
+                ToolCall(name="write_file", args={"Path": str(file_a), "Content": "hello"})
+            ],
+        ),
+        # Modified afterwards - should stay "created"
+        TranscriptStep(
+            step_index=2,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[
+                ToolCall(
+                    name="edit_file", args={"Path": str(file_a), "Target": "h", "Replacement": "H"}
+                )
+            ],
+        ),
+        # Created then deleted
+        TranscriptStep(
+            step_index=3,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[ToolCall(name="write_file", args={"Path": str(file_b), "Content": "temp"})],
+        ),
+        TranscriptStep(
+            step_index=4,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[ToolCall(name="delete_file", args={"Path": str(file_b)})],
+        ),
+    ]
+
+    recap = extract_run_recap(steps, duration_seconds=10.0, workspace_dir=ws_dir)
+    assert len(recap.touched_files) == 2
+    assert recap.touched_files[0].path == "src/alpha.py"
+    assert recap.touched_files[0].action == "created"
+    assert recap.touched_files[1].path == "src/beta.py"
+    assert recap.touched_files[1].action == "deleted"
+
+
+def test_get_git_diff_stat(tmp_path):
+    import subprocess
+
+    from agy_pilot.transcript import get_git_diff_stat
+
+    repo_dir = tmp_path / "test_repo"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Tester"], cwd=str(repo_dir), check=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(repo_dir), check=True)
+
+    # Empty/clean repo with no commits -> None
+    assert get_git_diff_stat(repo_dir) is None
+
+    test_file = repo_dir / "hello.txt"
+    test_file.write_text("line 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "hello.txt"], cwd=str(repo_dir), check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True)
+
+    # Clean repo after commit -> None
+    assert get_git_diff_stat(repo_dir) is None
+
+    # Modify file
+    test_file.write_text("line 1\nline 2\n", encoding="utf-8")
+    diff_stat = get_git_diff_stat(repo_dir)
+    assert diff_stat is not None
+    assert "hello.txt" in diff_stat
+    assert "1 insertion" in diff_stat
