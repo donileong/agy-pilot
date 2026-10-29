@@ -68,6 +68,7 @@ class Config:
     downloads_dir: Path = field(default_factory=lambda: DEFAULT_DATA_DIR / "downloads")
     db_path: Path = field(default_factory=lambda: DEFAULT_DATA_DIR / "agy_session.db")
     log_level: str = "INFO"
+    include_cli_projects: bool = False
 
     def __post_init__(self) -> None:
         if self.allowed_user_id > 0 and self.allowed_user_id not in self.allowed_user_ids:
@@ -108,6 +109,11 @@ class Config:
         downloads_dir = DEFAULT_DATA_DIR / "downloads"
         db_path = DEFAULT_DATA_DIR / "agy_session.db"
         log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+        include_cli_projects = os.getenv("AGY_INCLUDE_CLI_PROJECTS", "false").strip().lower() in (
+            "true",
+            "1",
+            "yes",
+        )
 
         return cls(
             adapter=adapter,
@@ -117,4 +123,5 @@ class Config:
             downloads_dir=downloads_dir,
             db_path=db_path,
             log_level=log_level,
+            include_cli_projects=include_cli_projects,
         )

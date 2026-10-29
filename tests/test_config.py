@@ -92,3 +92,16 @@ def test_config_global_config_file(tmp_path, monkeypatch):
     assert cfg.bot_token == "global_tok"
     assert cfg.allowed_user_ids == [999, 888]
     assert cfg.allowed_user_id == 999
+
+
+def test_config_include_cli_projects(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    # Default is False
+    monkeypatch.delenv("AGY_INCLUDE_CLI_PROJECTS", raising=False)
+    cfg = Config.from_env()
+    assert cfg.include_cli_projects is False
+
+    # Enabled via environment variable
+    monkeypatch.setenv("AGY_INCLUDE_CLI_PROJECTS", "true")
+    cfg_true = Config.from_env()
+    assert cfg_true.include_cli_projects is True

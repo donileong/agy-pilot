@@ -128,6 +128,18 @@ The wizard will:
 
 *(Manual setup alternative: You can also place a `.env` file in your repository or export `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_IDS`.)*
 
+#### Configuration Options & Environment Variables
+
+`agy-pilot` supports the following environment variables (stored in `~/.config/agy-pilot/config.env` or local `.env`):
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `TELEGRAM_BOT_TOKEN` | *(Required)* | Telegram Bot token from [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_ALLOWED_USER_IDS` | *(Required)* | Whitelist of numeric Telegram User IDs (`12345678` or `123, 456`) |
+| `AGY_ADAPTER` | `telegram` | Instant messaging adapter plugin (`telegram`, etc.) |
+| `AGY_INCLUDE_CLI_PROJECTS` | `false` | When `false` (default), `/projects` only displays GUI workspace projects matching the Antigravity 2 IDE sidebar. Set to `true` to also show standalone CLI sessions (`default-cli-project`). |
+| `LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+
 ### 3. Background Daemon Management (`agy-pilot service`)
 
 `agy-pilot` provides a structured, cross-platform service manager that natively targets macOS **`launchd`** (`com.ii2d.agy-pilot`) and Linux **`systemd --user`** (`agy-pilot.service`):
@@ -198,7 +210,7 @@ make clean-all   # removes service, logs, data directory, and config
 | Command | Description |
 | :--- | :--- |
 | `/skills` | Browse available Antigravity skills with interactive pagination |
-| `/projects` | Interactively select workspace projects and browse/switch historical conversations |
+| `/projects` | Interactively select workspace projects and browse/switch historical conversations (validates disk existence, deduplicates canonical paths, and filters out CLI projects by default) |
 | `/new` or `/reset` | Reset current session context and begin a fresh conversation |
 | `/status` | View active project binding, conversation ID, and environment metadata |
 | `/help` | Show command overview and usage instructions |
