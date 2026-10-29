@@ -41,6 +41,7 @@ from agy_pilot.transcript import (
     ProgressStepItem,
     StepTracker,
     TranscriptStep,
+    extract_run_recap,
     format_steps_summary,
 )
 
@@ -850,10 +851,12 @@ class TelegramAdapter(BaseIMAdapter):
 
         tracker = StepTracker(initial_after_index=after_step)
         recorded_steps: list[ProgressStepItem] = []
+        raw_steps: list[TranscriptStep] = []
 
         def on_step(step: TranscriptStep) -> None:
             nonlocal step_count
             step_count += 1
+            raw_steps.append(step)
             if item_step := tracker.process_step(step):
                 recorded_steps.append(item_step)
 
@@ -903,6 +906,26 @@ class TelegramAdapter(BaseIMAdapter):
         reply_markup = None
         total_steps = len(recorded_steps) if recorded_steps else step_count
         if total_steps > 0:
+            workspace_dir: Path | None = None
+            try:
+                meta = self.controller.get_conversation_metadata(conv_id)
+                if meta and meta.workspace_uris:
+                    first_ws = meta.workspace_uris[0].removeprefix("file://")
+                    workspace_dir = Path(first_ws)
+            except Exception as e:
+                logger.debug("Failed to retrieve workspace directory for recap: %s", e)
+
+            recap = extract_run_recap(
+                steps=raw_steps,
+                duration_seconds=elapsed,
+                workspace_dir=workspace_dir,
+                include_git_diff=True,
+                step_count=total_steps,
+            )
+            recap_md = recap.format_markdown()
+            if recap_md:
+                reply = f"{reply}\n\n{recap_md}" if reply.strip() else recap_md
+
             trace_key = f"{conv_id}:{after_step}"
             if len(f"steps:{trace_key}".encode("utf-8")) <= 64:
                 cb_data = f"steps:{trace_key}"

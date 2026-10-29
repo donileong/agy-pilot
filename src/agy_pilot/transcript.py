@@ -39,6 +39,7 @@ class TranscriptStep:
     status: str | None = None
     content: str | None = None
     thinking: Any = None
+    created_at: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
 
     @classmethod
@@ -56,6 +57,7 @@ class TranscriptStep:
             status=data.get("status"),
             content=data.get("content"),
             thinking=data.get("thinking"),
+            created_at=data.get("created_at"),
             tool_calls=tools,
         )
 
@@ -449,3 +451,203 @@ def get_last_turn_summary(
         )
 
     return LastTurnSummary(last_status="empty")
+
+
+def format_duration(seconds: float) -> str:
+    secs = max(0, int(round(seconds)))
+    if secs < 60:
+        return f"{secs}s"
+    minutes = secs // 60
+    rem_secs = secs % 60
+    if minutes < 60:
+        return f"{minutes}m {rem_secs}s"
+    hours = minutes // 60
+    rem_mins = minutes % 60
+    return f"{hours}h {rem_mins}m"
+
+
+@dataclass
+class FileChange:
+    path: str
+    action: str = "modified"  # "created", "modified", "deleted"
+
+
+@dataclass
+class RunRecap:
+    step_count: int = 0
+    duration_seconds: float = 0.0
+    touched_files: list[FileChange] = field(default_factory=list)
+    git_diff_stat: str | None = None
+
+    def format_markdown(self) -> str:
+        lines: list[str] = []
+        dur_str = format_duration(self.duration_seconds) if self.duration_seconds > 0 else ""
+        dur_part = f" · {dur_str}" if dur_str else ""
+        step_word = "step" if self.step_count == 1 else "steps"
+
+        if not self.touched_files:
+            lines.append(
+                f"⚡️ *Run Recap* · {self.step_count} {step_word}{dur_part} · _read-only (no files modified)_"
+            )
+            return "\n".join(lines)
+
+        file_count = len(self.touched_files)
+        file_word = "file" if file_count == 1 else "files"
+        lines.append(
+            f"⚡️ *Run Recap* · {file_count} {file_word} touched · {self.step_count} {step_word}{dur_part}\n"
+        )
+
+        lines.append(f"📝 *Touched Files ({file_count})*")
+        max_files = 10
+        if file_count > max_files:
+            for fc in self.touched_files[:8]:
+                lines.append(f"• `{fc.path}` _({fc.action})_")
+            lines.append(f"• _...and {file_count - 8} more files_")
+        else:
+            for fc in self.touched_files:
+                lines.append(f"• `{fc.path}` _({fc.action})_")
+
+        if self.git_diff_stat:
+            lines.append(f"\n📊 *Git Diff Stats*\n```text\n{self.git_diff_stat}\n```")
+
+        return "\n".join(lines)
+
+
+def _extract_file_path(args: dict[str, Any]) -> str | None:
+    for key in ("Path", "path", "TargetFile", "file_path", "AbsolutePath", "FilePath"):
+        if val := args.get(key):
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    return None
+
+
+def _normalize_path(file_path: str, workspace_dir: Path | str | None = None) -> str:
+    p = Path(file_path)
+    if workspace_dir:
+        try:
+            ws_path = Path(workspace_dir).resolve()
+            if p.is_absolute():
+                p_resolved = p.resolve()
+                return p_resolved.relative_to(ws_path).as_posix()
+        except Exception:
+            pass
+    return p.as_posix()
+
+
+FILE_TOOL_ACTIONS: dict[str, str] = {
+    "delete_file": "deleted",
+    "edit_file": "modified",
+    "create_file": "created",
+    "write_file": "created",
+    "write_to_file": "created",
+    "create_or_update_file": "modified",
+}
+
+
+def get_git_diff_stat(repo_dir: Path | str | None, max_lines: int = 10) -> str | None:
+    if not repo_dir:
+        return None
+    repo_path = Path(repo_dir)
+    if not repo_path.is_dir():
+        return None
+    try:
+        import subprocess
+
+        res = subprocess.run(
+            ["git", "diff", "HEAD", "--stat"],
+            cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            check=False,
+        )
+        out = ""
+        if res.returncode == 0 and res.stdout.strip():
+            out = res.stdout.strip()
+        else:
+            res2 = subprocess.run(
+                ["git", "diff", "--stat"],
+                cwd=str(repo_path),
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+                check=False,
+            )
+            if res2.returncode == 0 and res2.stdout.strip():
+                out = res2.stdout.strip()
+
+        if not out:
+            return None
+
+        lines = out.splitlines()
+        if len(lines) > max_lines:
+            head_lines = lines[: max_lines - 2]
+            tail_line = lines[-1]
+            return "\n".join(
+                head_lines + [f"... ({len(lines) - max_lines + 1} more files)", tail_line]
+            )
+        return out
+    except Exception as e:
+        logger.debug("Failed to get git diff stat: %s", e)
+        return None
+
+
+def extract_run_recap(
+    steps: list[TranscriptStep] | list[dict[str, Any]],
+    duration_seconds: float = 0.0,
+    workspace_dir: Path | str | None = None,
+    include_git_diff: bool = False,
+    step_count: int | None = None,
+) -> RunRecap:
+    parsed_steps: list[TranscriptStep] = []
+    for s in steps:
+        if isinstance(s, TranscriptStep):
+            parsed_steps.append(s)
+        elif isinstance(s, dict):
+            if parsed := TranscriptStep.from_dict(s):
+                parsed_steps.append(parsed)
+
+    actual_step_count = step_count if step_count is not None else len(parsed_steps)
+    touched: dict[str, FileChange] = {}
+
+    for step in parsed_steps:
+        for tc in step.tool_calls:
+            t_name = tc.name
+            t_args = tc.args or {}
+
+            # Handle MCP wrapper calls (e.g., github/create_or_update_file)
+            if t_name == "call_mcp_tool":
+                if sub_tool := t_args.get("ToolName"):
+                    t_name = str(sub_tool)
+                if isinstance(t_args.get("Arguments"), dict):
+                    t_args = t_args["Arguments"]
+
+            if t_name in FILE_TOOL_ACTIONS:
+                raw_path = _extract_file_path(t_args)
+                if not raw_path:
+                    continue
+                norm_path = _normalize_path(raw_path, workspace_dir)
+
+                action = FILE_TOOL_ACTIONS[t_name]
+                if t_name in ("write_file", "write_to_file"):
+                    if t_args.get("Overwrite") is True or t_args.get("Append") is True:
+                        action = "modified"
+
+                if norm_path not in touched:
+                    touched[norm_path] = FileChange(path=norm_path, action=action)
+                else:
+                    if action == "deleted":
+                        touched[norm_path].action = "deleted"
+                    elif touched[norm_path].action != "created":
+                        touched[norm_path].action = action
+
+    git_diff: str | None = None
+    if include_git_diff and workspace_dir:
+        git_diff = get_git_diff_stat(workspace_dir)
+
+    return RunRecap(
+        step_count=actual_step_count,
+        duration_seconds=duration_seconds,
+        touched_files=list(touched.values()),
+        git_diff_stat=git_diff,
+    )
