@@ -414,7 +414,8 @@ class TelegramAdapter(BaseIMAdapter):
         async def handle_projects(message: Message):
             if not self._check_auth(message):
                 return
-            projects = self.controller.list_projects()
+            include_cli = getattr(self.config, "include_cli_projects", False)
+            projects = self.controller.list_projects(include_cli_projects=include_cli)
             if not projects:
                 await message.answer("No local project history detected.")
                 return
@@ -522,7 +523,8 @@ class TelegramAdapter(BaseIMAdapter):
 
             if data.startswith("proj_page:"):
                 page = int(data.split(":")[1])
-                projects = self.controller.list_projects()
+                include_cli = getattr(self.config, "include_cli_projects", False)
+                projects = self.controller.list_projects(include_cli_projects=include_cli)
                 if not projects:
                     await query.answer("No project data", show_alert=True)
                     return
@@ -572,7 +574,12 @@ class TelegramAdapter(BaseIMAdapter):
                 if not project:
                     await query.answer("Project not found", show_alert=True)
                     return
-                items, total = self.controller.list_conversations(proj_id, limit=5, offset=page * 5)
+                pids = (
+                    project.related_project_ids
+                    if project and project.related_project_ids
+                    else [proj_id]
+                )
+                items, total = self.controller.list_conversations(pids, limit=5, offset=page * 5)
                 text, kb = build_conversations_keyboard(
                     project, items, page=page, total_count=total
                 )

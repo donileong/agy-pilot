@@ -7,9 +7,11 @@ import os
 import sqlite3
 import subprocess
 import time
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import unquote, urlparse
 
 from .discovery import Discovery
 from .transcript import (
@@ -45,12 +47,21 @@ class AntigravityProject:
     workspace_uris: list[str]
     last_active: str
     conversation_count: int
+    related_project_ids: list[str] = field(default_factory=list)
+    custom_display_name: str | None = None
 
     @property
     def display_name(self) -> str:
+        if self.custom_display_name:
+            return self.custom_display_name
         if self.workspace_uris:
-            first = self.workspace_uris[0].removeprefix("file://")
-            name = Path(first).name
+            first = self.workspace_uris[0]
+            if first.startswith("file://"):
+                parsed = urlparse(first)
+                path_str = unquote(parsed.path)
+            else:
+                path_str = first
+            name = Path(path_str).name
             if name:
                 return name
         return self.project_id[:8] if len(self.project_id) >= 8 else self.project_id
@@ -178,49 +189,123 @@ class Antigravity2Controller:
         except Exception as e:
             raise ValueError(f"Failed to parse agentapi JSON response: {stdout}") from e
 
-    def list_projects(self) -> list[AntigravityProject]:
+    @staticmethod
+    def _parse_workspace_uris(uris_raw: Any) -> list[str]:
+        if not uris_raw:
+            return []
+        try:
+            uris = json.loads(uris_raw)
+            if isinstance(uris, list):
+                return [str(u) for u in uris if u]
+            if isinstance(uris, str) and uris:
+                return [uris]
+        except Exception:
+            pass
+        return [str(uris_raw)] if str(uris_raw).strip() else []
+
+    @staticmethod
+    def _extract_workspace_path(uris: list[str]) -> Path | None:
+        if not uris:
+            return None
+        first = uris[0]
+        if not first:
+            return None
+        try:
+            if first.startswith("file://"):
+                parsed = urlparse(first)
+                path_str = unquote(parsed.path)
+            else:
+                path_str = first
+            if path_str:
+                return Path(path_str)
+        except Exception:
+            pass
+        return None
+
+    def list_projects(
+        self,
+        validate_paths: bool = True,
+        include_cli_projects: bool = False,
+    ) -> list[AntigravityProject]:
         if not self.db_path or not self.db_path.is_file():
             return []
 
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            cli_filter = "" if include_cli_projects else "AND project_id != 'default-cli-project'"
             cursor.execute(
-                """
-                SELECT project_id, workspace_uris, MAX(last_modified_time) as last_active, COUNT(*) as convo_count
+                f"""
+                SELECT project_id, workspace_uris, last_modified_time
                 FROM conversation_summaries
-                WHERE project_id != '' AND project_id != 'outside-of-project'
-                GROUP BY project_id, workspace_uris
-                ORDER BY last_active DESC;
+                WHERE project_id != '' AND project_id != 'outside-of-project' {cli_filter}
+                ORDER BY last_modified_time DESC;
                 """
             )
-            projects: list[AntigravityProject] = []
-            for row in cursor.fetchall():
-                pid, uris_raw, last_active, count = row
-                try:
-                    uris = json.loads(uris_raw)
-                    if not isinstance(uris, list):
-                        uris = [str(uris_raw)]
-                except Exception:
-                    uris = [str(uris_raw)]
-                projects.append(
-                    AntigravityProject(
-                        project_id=pid,
-                        workspace_uris=uris,
-                        last_active=str(last_active),
-                        conversation_count=int(count),
-                    )
-                )
+            rows = cursor.fetchall()
             conn.close()
+
+            projects_map: dict[str, AntigravityProject] = {}
+            for pid, uris_raw, last_active in rows:
+                uris = self._parse_workspace_uris(uris_raw)
+                path = self._extract_workspace_path(uris)
+
+                if validate_paths:
+                    if not path or not path.exists():
+                        continue
+                    group_key = str(path.resolve())
+                else:
+                    group_key = str(path.resolve()) if path else pid
+
+                if group_key not in projects_map:
+                    canonical_uris = [path.resolve().as_uri()] if path else uris
+                    projects_map[group_key] = AntigravityProject(
+                        project_id=pid,
+                        workspace_uris=canonical_uris,
+                        last_active=str(last_active),
+                        conversation_count=1,
+                        related_project_ids=[pid],
+                    )
+                else:
+                    entry = projects_map[group_key]
+                    entry.conversation_count += 1
+                    if pid not in entry.related_project_ids:
+                        entry.related_project_ids.append(pid)
+
+            projects = list(projects_map.values())
+
+            # Disambiguate projects that share the same directory leaf name
+            name_counts = Counter(p.display_name for p in projects)
+            for p in projects:
+                if name_counts[p.display_name] > 1 and p.workspace_uris:
+                    p_path = self._extract_workspace_path(p.workspace_uris)
+                    if p_path and p_path.parent.name:
+                        p.custom_display_name = f"{p.display_name} ({p_path.parent.name})"
+
             return projects
         except Exception as e:
             logger.warning("Error querying projects from %s: %s", self.db_path, e)
             return []
 
-    def get_project(self, project_id: str) -> AntigravityProject | None:
-        for p in self.list_projects():
+    def get_project(
+        self,
+        project_id: str,
+        validate_paths: bool = True,
+        include_cli_projects: bool = False,
+    ) -> AntigravityProject | None:
+        for p in self.list_projects(
+            validate_paths=validate_paths, include_cli_projects=include_cli_projects
+        ):
             if p.project_id == project_id or p.project_id.startswith(project_id):
                 return p
+            if any(
+                pid == project_id or pid.startswith(project_id) for pid in p.related_project_ids
+            ):
+                return p
+
+        # Fallback without path validation in case the project folder was moved/deleted
+        if validate_paths:
+            return self.get_project(project_id, validate_paths=False, include_cli_projects=True)
         return None
 
     def get_conversation_project_id(self, conversation_id: str) -> str | None:
@@ -243,9 +328,13 @@ class Antigravity2Controller:
             return None
 
     def list_conversations(
-        self, project_id: str, limit: int = 5, offset: int = 0
+        self, project_id: str | list[str], limit: int = 5, offset: int = 0
     ) -> tuple[list[ConversationItem], int]:
         if not self.db_path or not self.db_path.is_file():
+            return [], 0
+
+        pids = [project_id] if isinstance(project_id, str) else list(project_id)
+        if not pids:
             return [], 0
 
         try:
@@ -256,23 +345,25 @@ class Antigravity2Controller:
             columns = [col[1] for col in cursor.fetchall()]
             has_title = "title" in columns
 
+            placeholders = ",".join("?" * len(pids))
+
             cursor.execute(
-                "SELECT COUNT(*) FROM conversation_summaries WHERE project_id = ?;",
-                (project_id,),
+                f"SELECT COUNT(*) FROM conversation_summaries WHERE project_id IN ({placeholders});",
+                pids,
             )
             total_row = cursor.fetchone()
             total = int(total_row[0]) if total_row else 0
 
             if has_title:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT conversation_id, project_id, last_modified_time, title
                     FROM conversation_summaries
-                    WHERE project_id = ?
+                    WHERE project_id IN ({placeholders})
                     ORDER BY last_modified_time DESC
                     LIMIT ? OFFSET ?;
                     """,
-                    (project_id, limit, offset),
+                    (*pids, limit, offset),
                 )
                 items = [
                     ConversationItem(
@@ -285,14 +376,14 @@ class Antigravity2Controller:
                 ]
             else:
                 cursor.execute(
-                    """
+                    f"""
                     SELECT conversation_id, project_id, last_modified_time
                     FROM conversation_summaries
-                    WHERE project_id = ?
+                    WHERE project_id IN ({placeholders})
                     ORDER BY last_modified_time DESC
                     LIMIT ? OFFSET ?;
                     """,
-                    (project_id, limit, offset),
+                    (*pids, limit, offset),
                 )
                 items = [
                     ConversationItem(
@@ -307,6 +398,7 @@ class Antigravity2Controller:
             return items, total
         except Exception as e:
             logger.warning("Error querying conversations for project %s: %s", project_id, e)
+            return [], 0
             return [], 0
 
     def get_conversation_metadata(self, conversation_id: str) -> ConversationMetadata:
