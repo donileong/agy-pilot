@@ -467,3 +467,74 @@ async def test_wait_for_model_reply_flow(tmp_path, monkeypatch):
 
     assert reply == "Final reply here"
     assert len(step_calls) >= 1
+
+
+@pytest.mark.asyncio
+async def test_wait_for_model_reply_pauses_timeout_during_interaction(tmp_path, monkeypatch):
+    import asyncio
+
+    import agy_pilot.controller as ctrl_mod
+
+    cid = "test-interaction-pause-conv"
+    t_file = tmp_path / "transcript.jsonl"
+    monkeypatch.setattr(ctrl_mod, "get_transcript_path", lambda c: t_file)
+
+    # Step 1 asks a question
+    step1 = {
+        "step_index": 1,
+        "source": "MODEL",
+        "type": "PLANNER_RESPONSE",
+        "status": "DONE",
+        "tool_calls": [
+            {
+                "name": "ask_question",
+                "args": {
+                    "questions": [
+                        {
+                            "question": "Which option?",
+                            "options": ["A", "B"],
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+    t_file.write_text(json.dumps(step1) + "\n")
+
+    controller = Antigravity2Controller(
+        executable_path=tmp_path / "ls",
+        db_path=None,
+        hub_address=None,
+        hub_csrf_token=None,
+    )
+
+    notified = []
+
+    async def run_wait():
+        return await controller.wait_for_model_reply(
+            conversation_id=cid,
+            after_step_index=0,
+            timeout_secs=0.5,  # Short timeout
+            interaction_callback=lambda prompt: notified.append(prompt),
+        )
+
+    task = asyncio.create_task(run_wait())
+
+    # Wait 0.8s, which is > 0.5s timeout. Since interaction is pending, it shouldn't timeout.
+    await asyncio.sleep(0.8)
+    assert not task.done()
+    assert len(notified) == 1
+
+    # Now append step 2 resolving the question
+    step2 = {
+        "step_index": 2,
+        "source": "MODEL",
+        "type": "PLANNER_RESPONSE",
+        "status": "DONE",
+        "content": "Answer received, finished.",
+    }
+    with t_file.open("a") as f:
+        f.write(json.dumps(step2) + "\n")
+
+    result = await asyncio.wait_for(task, timeout=2.0)
+    assert result == "Answer received, finished."

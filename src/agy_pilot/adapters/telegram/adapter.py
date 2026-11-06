@@ -44,6 +44,7 @@ from agy_pilot.transcript import (
     TranscriptStep,
     extract_run_recap,
     format_steps_summary,
+    get_transcript_path,
 )
 
 from .heartbeat import StatusHeartbeat
@@ -176,10 +177,26 @@ class TelegramAdapter(BaseIMAdapter):
             return True
         return False
 
-    async def _download_voice_file(self, voice: Voice, message_id: int) -> Path:
-        self.config.downloads_dir.mkdir(parents=True, exist_ok=True)
+    async def _download_voice_file(
+        self, voice: Voice, message_id: int, conversation_id: str | None = None
+    ) -> Path:
+        target_dir = self.config.downloads_dir
+        if conversation_id:
+            try:
+                transcript_path = get_transcript_path(conversation_id)
+                # transcript_path is brain/<conv_id>/.system_generated/logs/transcript.jsonl
+                # brain_dir is brain/<conv_id>
+                brain_dir = transcript_path.parent.parent.parent
+                if brain_dir.is_dir():
+                    user_upload_dir = brain_dir / ".user_uploaded"
+                    user_upload_dir.mkdir(parents=True, exist_ok=True)
+                    target_dir = user_upload_dir
+            except Exception as e:
+                logger.debug("Failed to resolve brain directory for voice download: %s", e)
+
+        target_dir.mkdir(parents=True, exist_ok=True)
         filename = f"voice_{message_id}_{voice.file_unique_id}.ogg"
-        local_path = self.config.downloads_dir / filename
+        local_path = target_dir / filename
         file_info = await self.bot.get_file(voice.file_id)
         if not file_info.file_path:
             raise RuntimeError("File path not provided by Telegram")
@@ -767,7 +784,10 @@ class TelegramAdapter(BaseIMAdapter):
             status_msg = await message.answer("📥 Downloading voice message...")
 
             try:
-                abs_path = await self._download_voice_file(voice, message.message_id)
+                current_conv_id = await self.store.get_conversation_id()
+                abs_path = await self._download_voice_file(
+                    voice, message.message_id, conversation_id=current_conv_id
+                )
                 voice_text = (
                     f"The user sent a voice message. The audio file has been saved locally at: {abs_path}.\n"
                     "Please inspect or process this audio file with your tools, and respond to the user."

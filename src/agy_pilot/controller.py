@@ -624,8 +624,15 @@ class Antigravity2Controller:
         tracker = StepTracker(initial_after_index=after_step_index)
         last_log_time = time.monotonic()
         notified_interaction_steps: set[int] = set()
+        has_pending_interaction = False
 
-        while (time.monotonic() - start_time) < timeout_secs:
+        while True:
+            # If an interaction is waiting for human response, don't tick down the model turn timeout
+            if has_pending_interaction:
+                start_time = time.monotonic()
+            elif (time.monotonic() - start_time) >= timeout_secs:
+                break
+
             if transcript_path.is_file():
                 try:
                     with transcript_path.open("r", encoding="utf-8", errors="replace") as f:
@@ -635,12 +642,19 @@ class Antigravity2Controller:
                                     continue
 
                                 if prompt := step.get_ask_question_prompt():
+                                    has_pending_interaction = True
                                     if step.step_index not in notified_interaction_steps:
                                         notified_interaction_steps.add(step.step_index)
                                         if interaction_callback:
                                             res = interaction_callback(prompt)
                                             if asyncio.iscoroutine(res):
                                                 await res
+
+                                # If subsequent steps arrived, interaction has been answered or progressed
+                                if notified_interaction_steps and step.step_index > max(
+                                    notified_interaction_steps
+                                ):
+                                    has_pending_interaction = False
 
                                 if tracker.process_step(step):
                                     elapsed = int(time.monotonic() - start_time)
