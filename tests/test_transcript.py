@@ -378,7 +378,24 @@ def test_extract_run_recap_read_only_and_duration():
     assert format_duration(75) == "1m 15s"
     assert format_duration(3665) == "1h 1m"
 
-    steps = [
+    # Pure read-only run with only read_file, no commands
+    steps_read_only = [
+        TranscriptStep(
+            step_index=1,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[ToolCall(name="read_file", args={"Path": "src/main.py"})],
+        ),
+    ]
+    recap_ro = extract_run_recap(steps_read_only, duration_seconds=18.0)
+    assert recap_ro.step_count == 1
+    assert recap_ro.touched_files == []
+    assert recap_ro.executed_commands == []
+    md_ro = recap_ro.format_markdown()
+    assert "⚡️ *Run Recap* · 1 step · 18s · _read-only (no files modified)_" in md_ro
+
+    # Read-only run with command executed
+    steps_with_cmd = [
         TranscriptStep(
             step_index=1,
             source="MODEL",
@@ -393,11 +410,124 @@ def test_extract_run_recap_read_only_and_duration():
         ),
     ]
 
-    recap = extract_run_recap(steps, duration_seconds=18.0)
+    recap = extract_run_recap(steps_with_cmd, duration_seconds=18.0)
     assert recap.step_count == 2
     assert recap.touched_files == []
+    assert len(recap.executed_commands) == 1
+    assert recap.executed_commands[0].command == "pytest"
+    assert not recap.executed_commands[0].failed
     md = recap.format_markdown()
-    assert "⚡️ *Run Recap* · 2 steps · 18s · _read-only (no files modified)_" in md
+    assert "⚡️ *Run Recap* · 1 command run · 2 steps · 18s" in md
+    assert "⚙️ *Executed Commands (1)*" in md
+    assert "• `pytest`" in md
+
+
+def test_extract_run_recap_executed_commands():
+    from agy_pilot.transcript import ToolCall, TranscriptStep, extract_run_recap
+
+    long_cmd = "python -m pytest tests/test_very_long_named_module_that_exceeds_limit.py -v"
+    steps = [
+        TranscriptStep(
+            step_index=1,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[
+                ToolCall(name="write_file", args={"Path": "test.py", "Content": "test"}),
+                ToolCall(name="run_command", args={"CommandLine": "git status"}),
+            ],
+        ),
+        TranscriptStep(
+            step_index=2,
+            source="MODEL",
+            step_type="GENERIC",
+            status="DONE",
+            content="Command exited with code 0.\nOn branch main",
+        ),
+        TranscriptStep(
+            step_index=3,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[
+                # MCP tool format
+                ToolCall(
+                    name="call_mcp_tool",
+                    args={
+                        "ToolName": "bash",
+                        "Arguments": {"command": "cargo check"},
+                    },
+                ),
+            ],
+        ),
+        TranscriptStep(
+            step_index=4,
+            source="MODEL",
+            step_type="GENERIC",
+            status="DONE",
+            content="Command exited with code 1.\nerror: could not compile",
+        ),
+        # Long command and repeated command
+        TranscriptStep(
+            step_index=5,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[
+                ToolCall(name="run_command", args={"CommandLine": long_cmd}),
+                ToolCall(name="run_command", args={"CommandLine": "git status"}),
+                ToolCall(name="run_command", args={"CommandLine": "npm test"}),
+                ToolCall(name="run_command", args={"CommandLine": "make lint"}),
+                ToolCall(name="run_command", args={"CommandLine": "echo done"}),
+            ],
+        ),
+    ]
+
+    recap = extract_run_recap(steps, duration_seconds=42.0)
+    assert len(recap.touched_files) == 1
+    # Check commands deduplication: git status, cargo check, python -m pytest..., npm test, make lint, echo done (6 total)
+    assert len(recap.executed_commands) == 6
+    assert recap.executed_commands[0].command == "git status"
+    assert not recap.executed_commands[0].failed
+
+    assert recap.executed_commands[1].command == "cargo check"
+    assert recap.executed_commands[1].failed  # exited with code 1
+    assert recap.executed_commands[1].exit_code == 1
+
+    assert recap.executed_commands[2].command.endswith("...")
+    assert len(recap.executed_commands[2].command) == 50
+
+    md = recap.format_markdown()
+    assert "⚡️ *Run Recap* · 1 file touched · 5 steps · 42s" in md
+    assert "📝 *Touched Files (1)*" in md
+    assert "⚙️ *Executed Commands (6)*" in md
+    assert "• `git status`" in md
+    assert "• `cargo check` ❌ (exit 1)" in md
+    assert "• _...and 1 more command_" in md
+
+
+def test_extract_run_recap_tool_summary_preference():
+    from agy_pilot.transcript import ToolCall, TranscriptStep, extract_run_recap
+
+    steps = [
+        TranscriptStep(
+            step_index=1,
+            source="MODEL",
+            step_type="PLANNER_RESPONSE",
+            tool_calls=[
+                ToolCall(
+                    name="run_command",
+                    args={
+                        "CommandLine": "uv run pytest tests/test_transcript.py -v",
+                        "toolSummary": "Unit test execution",
+                    },
+                )
+            ],
+        ),
+    ]
+
+    recap = extract_run_recap(steps, duration_seconds=5.0)
+    assert len(recap.executed_commands) == 1
+    assert recap.executed_commands[0].command == "Unit test execution"
+    md = recap.format_markdown()
+    assert "• `Unit test execution`" in md
 
 
 def test_extract_run_recap_file_lifecycle_and_workspace_normalization(tmp_path):
