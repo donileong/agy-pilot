@@ -349,3 +349,17 @@ def build_tool_approval_keyboard(
     ]
 
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_cancel_execution_keyboard(conversation_id: str) -> InlineKeyboardMarkup:
+    """Builds an inline keyboard with a Cancel Execution button."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⏹ Cancel",
+                    callback_data=f"cancel_exec:{conversation_id}",
+                )
+            ]
+        ]
+    )

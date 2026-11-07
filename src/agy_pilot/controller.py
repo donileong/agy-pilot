@@ -619,6 +619,79 @@ class Antigravity2Controller:
 
         return False
 
+    def _post_connectrpc(
+        self, endpoint: str, payload: dict[str, Any], timeout: float = 5.0
+    ) -> tuple[bool, int | None, str]:
+        """Dispatches a JSON ConnectRPC request to the Hub and returns (ok, status_code, response_text)."""
+        if not self.hub_address:
+            return False, None, "hub_address is missing"
+
+        url = f"http://{self.hub_address}/exa.language_server_pb.LanguageServerService/{endpoint}"
+        headers = {
+            "Content-Type": "application/json",
+            "Connect-Protocol-Version": "1",
+            "x-codeium-csrf-token": self.hub_csrf_token or "",
+        }
+
+        import urllib.error
+        import urllib.request
+
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                body = res.read().decode("utf-8", "ignore") if res.readable() else ""
+                return res.status in (200, 204), res.status, body
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", "ignore")
+            return False, e.code, err_body
+        except Exception as e:
+            return False, None, str(e)
+
+    def cancel_execution(self, conversation_id: str) -> bool:
+        """Actively aborts the current execution in the Hub via ConnectRPC."""
+        if not self.hub_address:
+            logger.error("Cannot cancel execution: hub_address is missing")
+            return False
+
+        # 1. Attempt CancelCascadeInvocation
+        payload_invoc = {
+            "cascadeId": conversation_id,
+            "killBackgroundTasks": True,
+        }
+        ok, code, body = self._post_connectrpc("CancelCascadeInvocation", payload_invoc)
+        if ok:
+            logger.info("CancelCascadeInvocation succeeded for conversation %s", conversation_id)
+            return True
+        logger.debug(
+            "CancelCascadeInvocation returned code %s for %s: %s",
+            code,
+            conversation_id,
+            body,
+        )
+
+        # 2. Fallback to ForceStopCascadeTree
+        payload_force = {
+            "conversationId": conversation_id,
+        }
+        ok_force, code_force, body_force = self._post_connectrpc(
+            "ForceStopCascadeTree", payload_force
+        )
+        if ok_force:
+            logger.info("ForceStopCascadeTree succeeded for conversation %s", conversation_id)
+            return True
+        logger.warning(
+            "ForceStopCascadeTree returned code %s for %s: %s",
+            code_force,
+            conversation_id,
+            body_force,
+        )
+        return False
+
     def query_waiting_approval(self, conversation_id: str) -> ToolApprovalPrompt | None:
         if not self.hub_address:
             return None
@@ -683,7 +756,9 @@ class Antigravity2Controller:
         self,
         conversation_id: str,
         after_step_index: int,
-        timeout_secs: float = 300.0,
+        timeout_secs: float | None = None,
+        inactivity_timeout_secs: float = 600.0,
+        max_timeout_secs: float = 3600.0,
         interaction_timeout_secs: float = 1800.0,
         progress_callback: Callable[[str], None] | None = None,
         step_callback: Callable[[TranscriptStep], None] | None = None,
@@ -691,6 +766,9 @@ class Antigravity2Controller:
         approval_callback: Callable[[ToolApprovalPrompt], Any] | None = None,
         dismiss_interaction_callback: Callable[[int], Any] | None = None,
     ) -> str:
+        if timeout_secs is not None:
+            inactivity_timeout_secs = timeout_secs
+            max_timeout_secs = timeout_secs
         transcript_path = get_transcript_path(conversation_id)
         logger.info(
             "Waiting for model reply: conv=%s, after=%d, path=%s",
@@ -700,6 +778,7 @@ class Antigravity2Controller:
         )
 
         start_time = time.monotonic()
+        last_activity_time = time.monotonic()
         interaction_start_time: float | None = None
         tracker = StepTracker(initial_after_index=after_step_index)
         last_log_time = time.monotonic()
@@ -731,13 +810,13 @@ class Antigravity2Controller:
                         interaction_start_time = now
                     if approval.step_index not in notified_approval_steps:
                         notified_approval_steps.add(approval.step_index)
+                        last_activity_time = now
                         res = approval_callback(approval)
                         if asyncio.iscoroutine(res):
                             await res
 
             # Check interaction timeout ceiling
             if has_pending_interaction:
-                start_time = time.monotonic()
                 if (
                     interaction_start_time is not None
                     and (now - interaction_start_time) >= interaction_timeout_secs
@@ -745,8 +824,14 @@ class Antigravity2Controller:
                     raise TimeoutError(
                         f"Timed out waiting for user interaction/approval in conversation {conversation_id} after {interaction_timeout_secs}s"
                     )
-            elif (now - start_time) >= timeout_secs:
-                break
+            elif (now - last_activity_time) >= inactivity_timeout_secs:
+                raise TimeoutError(
+                    f"Timed out due to inactivity in conversation {conversation_id} after {inactivity_timeout_secs}s without progress"
+                )
+            elif (now - start_time) >= max_timeout_secs:
+                raise TimeoutError(
+                    f"Timed out reached maximum execution duration in conversation {conversation_id} after {max_timeout_secs}s"
+                )
 
             if transcript_path.is_file():
                 try:
@@ -762,6 +847,8 @@ class Antigravity2Controller:
                                 if step := TranscriptStep.parse_line(line):
                                     if step.step_index <= after_step_index:
                                         continue
+
+                                    last_activity_time = time.monotonic()
 
                                     if prompt := step.get_ask_question_prompt():
                                         if not has_pending_interaction:
@@ -812,7 +899,3 @@ class Antigravity2Controller:
                 last_log_time = time.monotonic()
 
             await asyncio.sleep(0.3)
-
-        raise TimeoutError(
-            f"Timed out waiting for model reply in conversation {conversation_id} after {timeout_secs}s"
-        )

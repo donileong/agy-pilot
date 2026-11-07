@@ -50,6 +50,7 @@ from agy_pilot.transcript import (
 
 from .heartbeat import StatusHeartbeat
 from .keyboards import (
+    build_cancel_execution_keyboard,
     build_conversations_keyboard,
     build_interaction_keyboard,
     build_project_actions_keyboard,
@@ -114,6 +115,13 @@ class QueueItem:
     status_message_id: int | None = None
 
 
+@dataclass
+class ActiveRun:
+    task: asyncio.Task[Any]
+    chat_id: int
+    status_message_id: int | None = None
+
+
 class TelegramAdapter(BaseIMAdapter):
     """Telegram Instant Messaging adapter for headless Antigravity control."""
 
@@ -143,6 +151,7 @@ class TelegramAdapter(BaseIMAdapter):
         self._posted_interaction_messages: dict[int, tuple[int, int]] = {}
         self._traces: dict[str, tuple[str, int, list[ProgressStepItem], float | None]] = {}
         self._pending_skills: dict[int, tuple[SkillItem, float]] = {}
+        self._active_runs: dict[str, ActiveRun] = {}
 
         self._register_handlers()
 
@@ -157,6 +166,16 @@ class TelegramAdapter(BaseIMAdapter):
 
     def _clear_pending_skill(self, user_id: int) -> None:
         self._pending_skills.pop(user_id, None)
+
+    async def _cancel_active_run(self, conv_id: str) -> bool:
+        """Cancels an active execution in the Hub and terminates its local background task."""
+        active_run = self._active_runs.get(conv_id)
+        self.controller.cancel_execution(conv_id)
+        if active_run:
+            if not active_run.task.done():
+                active_run.task.cancel()
+            return True
+        return False
 
     async def _prompt_for_skill_input(self, chat_id: int, user_id: int, skill: SkillItem) -> None:
         self._pending_skills[user_id] = (skill, time.time())
@@ -358,7 +377,7 @@ class TelegramAdapter(BaseIMAdapter):
                 "• `/projects` - Interactively browse projects and switch conversations\n"
                 "• `/new` or `/reset` - Reset current conversation\n"
                 "• `/status` - Show environment and session status\n"
-                "• `/cancel` - Cancel pending skill selection\n"
+                "• `/cancel` - Cancel pending skill selection or abort active agent execution\n"
                 "• `/help` - Show help instructions\n"
                 "• `/<skill_name>` - Invoke a specific skill (e.g. `/research explore topic`)"
             )
@@ -740,6 +759,17 @@ class TelegramAdapter(BaseIMAdapter):
                     )
                 return
 
+            if data.startswith("cancel_exec:"):
+                conv_id = data.split(":", 1)[1]
+                await self._cancel_active_run(conv_id)
+                await query.answer("Execution cancellation requested")
+                if query.message:
+                    try:
+                        await query.message.edit_reply_markup(reply_markup=None)
+                    except Exception:
+                        pass
+                return
+
             if data.startswith("steps:") or data.startswith("trace:"):
                 cached_steps: list[ProgressStepItem] = []
                 elapsed_val: float | None = None
@@ -871,6 +901,24 @@ class TelegramAdapter(BaseIMAdapter):
                 self._clear_pending_skill(user_id)
                 await message.answer("❌ Skill selection cancelled.")
                 return
+
+            active_conv = await self.store.get_conversation_id()
+            if active_conv and active_conv in self._active_runs:
+                active_run = self._active_runs.get(active_conv)
+                await self._cancel_active_run(active_conv)
+                if active_run and active_run.status_message_id:
+                    try:
+                        await self.bot.edit_message_text(
+                            chat_id=active_run.chat_id,
+                            message_id=active_run.status_message_id,
+                            text="⏹ Execution cancelled by user.",
+                            reply_markup=None,
+                        )
+                    except Exception:
+                        pass
+                await message.answer("⏹ Active execution cancellation requested.")
+                return
+
             await message.answer("Nothing to cancel.")
 
         @self.dp.message(F.text)
@@ -1076,17 +1124,46 @@ class TelegramAdapter(BaseIMAdapter):
                 except Exception as e:
                     logger.debug("Failed to remove reply markup for step %d: %s", step_idx, e)
 
-        try:
-            reply = await self.controller.wait_for_model_reply(
+        cancel_kb = build_cancel_execution_keyboard(conv_id)
+        heartbeat.set_reply_markup(cancel_kb)
+
+        wait_task = asyncio.create_task(
+            self.controller.wait_for_model_reply(
                 conversation_id=conv_id,
                 after_step_index=after_step,
-                timeout_secs=300.0,
+                timeout_secs=None,
+                inactivity_timeout_secs=600.0,
+                max_timeout_secs=3600.0,
                 progress_callback=lambda board: heartbeat.update_status(board),
                 step_callback=on_step,
                 interaction_callback=on_interaction,
                 approval_callback=on_approval,
                 dismiss_interaction_callback=on_dismiss,
             )
+        )
+        self._active_runs[conv_id] = ActiveRun(
+            task=wait_task,
+            chat_id=item.chat_id,
+            status_message_id=item.status_message_id,
+        )
+
+        try:
+            reply = await wait_task
+        except asyncio.CancelledError:
+            logger.info("Wait task for conversation %s was cancelled", conv_id)
+            await heartbeat.stop()
+            cancel_msg = "⏹ Execution cancelled by user."
+            if item.status_message_id:
+                try:
+                    await self.bot.edit_message_text(
+                        chat_id=item.chat_id,
+                        message_id=item.status_message_id,
+                        text=cancel_msg,
+                        reply_markup=None,
+                    )
+                except Exception:
+                    pass
+            return
         except Exception as e:
             elapsed = time.monotonic() - start_time
             logger.error("Error waiting for model reply: %s", e)
@@ -1098,10 +1175,13 @@ class TelegramAdapter(BaseIMAdapter):
                         chat_id=item.chat_id,
                         message_id=item.status_message_id,
                         text=err_msg,
+                        reply_markup=None,
                     )
                 except Exception:
                     pass
             return
+        finally:
+            self._active_runs.pop(conv_id, None)
 
         elapsed = time.monotonic() - start_time
 

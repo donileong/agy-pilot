@@ -28,6 +28,10 @@ _Avoid_: History, event log, audit log
 The state machine responsible for tailing transcript deltas, tracking tool execution progress, and debouncing status messages.
 _Avoid_: Event listener, stream handler
 
+**Cascade Cancellation**:
+The active abort signal dispatched via ConnectRPC (`CancelCascadeInvocation`) to terminate the running agent turn, nested subagents, and background processes in the Hub.
+_Avoid_: Kill, force stop, interrupt
+
 **IM Adapter**:
 The pluggable interface and protocol adapter (e.g. Telegram, Discord, Slack) responsible for translating chat events and user commands to and from the remote controller.
 _Avoid_: Bot, connector, frontend
