@@ -49,8 +49,9 @@
   The core Antigravity remote engine is strictly separated from message delivery protocols via `BaseIMAdapter`. Telegram is provided out-of-the-box, with clean interfaces to plug in Discord, Slack, Feishu/Lark, or custom webhook bridges.
 * **Live Progress Board & Trace Inspector**:
   Renders live progress updates directly in chat (thinking phases, MCP tool calls, file edits, bash commands) with debounced updates to prevent platform rate limits. Finished responses include an expandable trace button for complete auditability.
-* **Interactive Human-in-the-Loop Support (`ask_question`)**:
-  When Antigravity requests user feedback or decision branching via `ask_question`, the controller presents interactive inline buttons directly in the chat, allowing instantaneous resolution from mobile devices.
+* **Interactive Human-in-the-Loop & Tool Approvals**:
+  - **Decision Prompts (`ask_question`)**: Presents interactive inline buttons directly in chat when Antigravity requests user decisions or option selections.
+  - **Tool & Command Approvals**: When running with permission review enabled (`CORTEX_STEP_STATUS_WAITING`), prompts for command executions or tool actions appear as `Allow Once` / `Deny` inline buttons in Telegram. Resolving an interaction directly on the desktop IDE automatically synchronizes and dismisses the pending mobile buttons.
 * **Dynamic Skill Discovery & Slash Commands**:
   Automatically discovers built-in, global (`~/.gemini/config/skills/`), and workspace-specific skills. Dynamically syncs available skills to the chat command menu for one-tap execution (e.g., `/research <prompt>`).
 * **Native Voice Note Ingestion**:
