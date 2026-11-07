@@ -631,6 +631,8 @@ async def test_pending_skill_command_interrupt(bridge_setup, tmp_path):
 
 @pytest.mark.asyncio
 async def test_cancel_command_aborts_active_execution(bridge_setup):
+    from agy_pilot.adapters.telegram.adapter import ActiveRun
+
     bridge, mock_controller, mock_store = bridge_setup
     mock_store.get_conversation_id.return_value = "conv-active-running"
     mock_controller.cancel_execution.return_value = True
@@ -639,7 +641,7 @@ async def test_cancel_command_aborts_active_execution(bridge_setup):
 
     mock_task = MagicMock()
     mock_task.done.return_value = False
-    bridge._active_runs["conv-active-running"] = (mock_task, 123, 777)
+    bridge._active_runs["conv-active-running"] = ActiveRun(mock_task, 123, 777)
 
     msg = create_mock_message(user_id=123, text="/cancel")
     await cancel_handler(msg)
@@ -651,12 +653,14 @@ async def test_cancel_command_aborts_active_execution(bridge_setup):
 
 @pytest.mark.asyncio
 async def test_cancel_exec_callback_query(bridge_setup):
+    from agy_pilot.adapters.telegram.adapter import ActiveRun
+
     bridge, mock_controller, _ = bridge_setup
     mock_controller.cancel_execution.return_value = True
 
     mock_task = MagicMock()
     mock_task.done.return_value = False
-    bridge._active_runs["conv-to-cancel"] = (mock_task, 123, 888)
+    bridge._active_runs["conv-to-cancel"] = ActiveRun(mock_task, 123, 888)
 
     callback_handler = get_callback_handler(bridge)
     query = create_mock_callback_query(user_id=123, data="cancel_exec:conv-to-cancel")

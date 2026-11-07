@@ -619,12 +619,14 @@ class Antigravity2Controller:
 
         return False
 
-    def cancel_execution(self, conversation_id: str) -> bool:
-        """Actively aborts the current execution in the Hub via ConnectRPC."""
+    def _post_connectrpc(
+        self, endpoint: str, payload: dict[str, Any], timeout: float = 5.0
+    ) -> tuple[bool, int | None, str]:
+        """Dispatches a JSON ConnectRPC request to the Hub and returns (ok, status_code, response_text)."""
         if not self.hub_address:
-            logger.error("Cannot cancel execution: hub_address is missing")
-            return False
+            return False, None, "hub_address is missing"
 
+        url = f"http://{self.hub_address}/exa.language_server_pb.LanguageServerService/{endpoint}"
         headers = {
             "Content-Type": "application/json",
             "Connect-Protocol-Version": "1",
@@ -634,57 +636,60 @@ class Antigravity2Controller:
         import urllib.error
         import urllib.request
 
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                body = res.read().decode("utf-8", "ignore") if res.readable() else ""
+                return res.status in (200, 204), res.status, body
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", "ignore")
+            return False, e.code, err_body
+        except Exception as e:
+            return False, None, str(e)
+
+    def cancel_execution(self, conversation_id: str) -> bool:
+        """Actively aborts the current execution in the Hub via ConnectRPC."""
+        if not self.hub_address:
+            logger.error("Cannot cancel execution: hub_address is missing")
+            return False
+
         # 1. Attempt CancelCascadeInvocation
-        url_cancel_invoc = f"http://{self.hub_address}/exa.language_server_pb.LanguageServerService/CancelCascadeInvocation"
         payload_invoc = {
             "cascadeId": conversation_id,
             "killBackgroundTasks": True,
         }
-        try:
-            req = urllib.request.Request(
-                url_cancel_invoc,
-                data=json.dumps(payload_invoc).encode("utf-8"),
-                headers=headers,
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=5) as res:
-                if res.status in (200, 204):
-                    logger.info(
-                        "CancelCascadeInvocation succeeded for conversation %s", conversation_id
-                    )
-                    return True
-        except urllib.error.HTTPError as e:
-            err_body = e.read().decode("utf-8", "ignore")
-            logger.debug(
-                "CancelCascadeInvocation returned code %d for %s: %s",
-                e.code,
-                conversation_id,
-                err_body,
-            )
-        except Exception as e:
-            logger.warning("Error calling CancelCascadeInvocation for %s: %s", conversation_id, e)
+        ok, code, body = self._post_connectrpc("CancelCascadeInvocation", payload_invoc)
+        if ok:
+            logger.info("CancelCascadeInvocation succeeded for conversation %s", conversation_id)
+            return True
+        logger.debug(
+            "CancelCascadeInvocation returned code %s for %s: %s",
+            code,
+            conversation_id,
+            body,
+        )
 
         # 2. Fallback to ForceStopCascadeTree
-        url_force_stop = f"http://{self.hub_address}/exa.language_server_pb.LanguageServerService/ForceStopCascadeTree"
         payload_force = {
             "conversationId": conversation_id,
         }
-        try:
-            req = urllib.request.Request(
-                url_force_stop,
-                data=json.dumps(payload_force).encode("utf-8"),
-                headers=headers,
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=5) as res:
-                if res.status in (200, 204):
-                    logger.info(
-                        "ForceStopCascadeTree succeeded for conversation %s", conversation_id
-                    )
-                    return True
-        except Exception as e:
-            logger.warning("Error calling ForceStopCascadeTree for %s: %s", conversation_id, e)
-
+        ok_force, code_force, body_force = self._post_connectrpc(
+            "ForceStopCascadeTree", payload_force
+        )
+        if ok_force:
+            logger.info("ForceStopCascadeTree succeeded for conversation %s", conversation_id)
+            return True
+        logger.warning(
+            "ForceStopCascadeTree returned code %s for %s: %s",
+            code_force,
+            conversation_id,
+            body_force,
+        )
         return False
 
     def query_waiting_approval(self, conversation_id: str) -> ToolApprovalPrompt | None:
@@ -800,19 +805,18 @@ class Antigravity2Controller:
             if approval_callback and (now - last_approval_check_time) >= 1.0:
                 last_approval_check_time = now
                 if approval := self.query_waiting_approval(conversation_id):
-                    last_activity_time = now
                     if not has_pending_interaction:
                         has_pending_interaction = True
                         interaction_start_time = now
                     if approval.step_index not in notified_approval_steps:
                         notified_approval_steps.add(approval.step_index)
+                        last_activity_time = now
                         res = approval_callback(approval)
                         if asyncio.iscoroutine(res):
                             await res
 
             # Check interaction timeout ceiling
             if has_pending_interaction:
-                last_activity_time = time.monotonic()
                 if (
                     interaction_start_time is not None
                     and (now - interaction_start_time) >= interaction_timeout_secs

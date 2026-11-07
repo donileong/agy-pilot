@@ -115,6 +115,13 @@ class QueueItem:
     status_message_id: int | None = None
 
 
+@dataclass
+class ActiveRun:
+    task: asyncio.Task[Any]
+    chat_id: int
+    status_message_id: int | None = None
+
+
 class TelegramAdapter(BaseIMAdapter):
     """Telegram Instant Messaging adapter for headless Antigravity control."""
 
@@ -144,7 +151,7 @@ class TelegramAdapter(BaseIMAdapter):
         self._posted_interaction_messages: dict[int, tuple[int, int]] = {}
         self._traces: dict[str, tuple[str, int, list[ProgressStepItem], float | None]] = {}
         self._pending_skills: dict[int, tuple[SkillItem, float]] = {}
-        self._active_runs: dict[str, tuple[asyncio.Task[Any], int, int | None]] = {}
+        self._active_runs: dict[str, ActiveRun] = {}
 
         self._register_handlers()
 
@@ -159,6 +166,16 @@ class TelegramAdapter(BaseIMAdapter):
 
     def _clear_pending_skill(self, user_id: int) -> None:
         self._pending_skills.pop(user_id, None)
+
+    async def _cancel_active_run(self, conv_id: str) -> bool:
+        """Cancels an active execution in the Hub and terminates its local background task."""
+        active_run = self._active_runs.get(conv_id)
+        self.controller.cancel_execution(conv_id)
+        if active_run:
+            if not active_run.task.done():
+                active_run.task.cancel()
+            return True
+        return False
 
     async def _prompt_for_skill_input(self, chat_id: int, user_id: int, skill: SkillItem) -> None:
         self._pending_skills[user_id] = (skill, time.time())
@@ -744,12 +761,7 @@ class TelegramAdapter(BaseIMAdapter):
 
             if data.startswith("cancel_exec:"):
                 conv_id = data.split(":", 1)[1]
-                active_run = self._active_runs.get(conv_id)
-                self.controller.cancel_execution(conv_id)
-                if active_run:
-                    task, c_id, s_msg_id = active_run
-                    if not task.done():
-                        task.cancel()
+                await self._cancel_active_run(conv_id)
                 await query.answer("Execution cancellation requested")
                 if query.message:
                     try:
@@ -892,10 +904,18 @@ class TelegramAdapter(BaseIMAdapter):
 
             active_conv = await self.store.get_conversation_id()
             if active_conv and active_conv in self._active_runs:
-                self.controller.cancel_execution(active_conv)
-                task, c_id, s_msg_id = self._active_runs[active_conv]
-                if not task.done():
-                    task.cancel()
+                active_run = self._active_runs.get(active_conv)
+                await self._cancel_active_run(active_conv)
+                if active_run and active_run.status_message_id:
+                    try:
+                        await self.bot.edit_message_text(
+                            chat_id=active_run.chat_id,
+                            message_id=active_run.status_message_id,
+                            text="⏹ Execution cancelled by user.",
+                            reply_markup=None,
+                        )
+                    except Exception:
+                        pass
                 await message.answer("⏹ Active execution cancellation requested.")
                 return
 
@@ -1121,7 +1141,11 @@ class TelegramAdapter(BaseIMAdapter):
                 dismiss_interaction_callback=on_dismiss,
             )
         )
-        self._active_runs[conv_id] = (wait_task, item.chat_id, item.status_message_id)
+        self._active_runs[conv_id] = ActiveRun(
+            task=wait_task,
+            chat_id=item.chat_id,
+            status_message_id=item.status_message_id,
+        )
 
         try:
             reply = await wait_task
