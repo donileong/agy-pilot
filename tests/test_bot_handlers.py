@@ -630,23 +630,39 @@ async def test_pending_skill_command_interrupt(bridge_setup, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pending_skill_timeout(bridge_setup, tmp_path):
-    bridge, _, _ = bridge_setup
-    from agy_pilot.skills import SkillItem
+async def test_cancel_command_aborts_active_execution(bridge_setup):
+    bridge, mock_controller, mock_store = bridge_setup
+    mock_store.get_conversation_id.return_value = "conv-active-running"
+    mock_controller.cancel_execution.return_value = True
 
-    mock_skill = SkillItem(
-        name="research",
-        command_name="research",
-        description="Deep dive research",
-        path=tmp_path / "SKILL.md",
-        scope="global",
-    )
-    # Set pending skill timestamp to 500 seconds ago
-    bridge._pending_skills[123] = (mock_skill, 1000.0)
+    cancel_handler = get_handler(bridge, "handle_cancel")
 
-    import time
-    from unittest.mock import patch
+    mock_task = MagicMock()
+    mock_task.done.return_value = False
+    bridge._active_runs["conv-active-running"] = (mock_task, 123, 777)
 
-    with patch.object(time, "time", return_value=1500.0):
-        assert bridge._get_pending_skill(123) is None
-        assert 123 not in bridge._pending_skills
+    msg = create_mock_message(user_id=123, text="/cancel")
+    await cancel_handler(msg)
+
+    mock_controller.cancel_execution.assert_called_once_with("conv-active-running")
+    mock_task.cancel.assert_called_once()
+    assert "Active execution cancellation requested" in msg.answer.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_cancel_exec_callback_query(bridge_setup):
+    bridge, mock_controller, _ = bridge_setup
+    mock_controller.cancel_execution.return_value = True
+
+    mock_task = MagicMock()
+    mock_task.done.return_value = False
+    bridge._active_runs["conv-to-cancel"] = (mock_task, 123, 888)
+
+    callback_handler = get_callback_handler(bridge)
+    query = create_mock_callback_query(user_id=123, data="cancel_exec:conv-to-cancel")
+
+    await callback_handler(query)
+
+    mock_controller.cancel_execution.assert_called_once_with("conv-to-cancel")
+    mock_task.cancel.assert_called_once()
+    assert "cancellation requested" in query.answer.call_args[0][0]

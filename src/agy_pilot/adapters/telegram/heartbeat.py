@@ -7,6 +7,7 @@ import time
 from aiogram import Bot
 from aiogram.enums import ChatAction, ParseMode
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +15,19 @@ logger = logging.getLogger(__name__)
 class StatusHeartbeat:
     """Sends background typing actions and throttles status edits to Telegram."""
 
-    def __init__(self, bot: Bot, chat_id: int, message_id: int | None, initial_status: str):
+    def __init__(
+        self,
+        bot: Bot,
+        chat_id: int,
+        message_id: int | None,
+        initial_status: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ):
         self.bot = bot
         self.chat_id = chat_id
         self.message_id = message_id
         self._current_text = initial_status
+        self._reply_markup = reply_markup
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
@@ -28,6 +37,9 @@ class StatusHeartbeat:
 
     def update_status(self, text: str) -> None:
         self._current_text = text
+
+    def set_reply_markup(self, reply_markup: InlineKeyboardMarkup | None) -> None:
+        self._reply_markup = reply_markup
 
     async def _run_loop(self) -> None:
         last_typing = time.monotonic() - 10.0
@@ -55,6 +67,7 @@ class StatusHeartbeat:
                                 chat_id=self.chat_id,
                                 message_id=self.message_id,
                                 text=text_to_render,
+                                reply_markup=self._reply_markup,
                                 parse_mode=ParseMode.MARKDOWN,
                             )
                         except TelegramBadRequest as e:
@@ -65,6 +78,7 @@ class StatusHeartbeat:
                                         chat_id=self.chat_id,
                                         message_id=self.message_id,
                                         text=text_to_render,
+                                        reply_markup=self._reply_markup,
                                     )
                                 except Exception:
                                     pass

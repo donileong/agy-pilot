@@ -651,3 +651,52 @@ async def test_wait_for_model_reply_dismiss_interaction_callback(tmp_path, monke
     result = await asyncio.wait_for(task, timeout=2.0)
     assert result == "Progressed from desktop."
     assert 1 in dismissed
+
+
+def test_cancel_execution_invokes_hub_rpc(tmp_path):
+    controller = Antigravity2Controller(
+        executable_path=tmp_path / "ls",
+        db_path=None,
+        hub_address="127.0.0.1:4567",
+        hub_csrf_token="test_token",
+    )
+
+    mock_res = MagicMock()
+    mock_res.status = 200
+    mock_res.__enter__.return_value = mock_res
+
+    with patch("urllib.request.urlopen", return_value=mock_res) as mock_urlopen:
+        success = controller.cancel_execution("conv-12345")
+        assert success is True
+        assert mock_urlopen.call_count == 1
+        req = mock_urlopen.call_args[0][0]
+        assert "CancelCascadeInvocation" in req.full_url
+        assert req.headers.get("X-codeium-csrf-token") == "test_token"
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["cascadeId"] == "conv-12345"
+        assert body["killBackgroundTasks"] is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_model_reply_inactivity_timeout(tmp_path):
+    cid = "conv-inactivity"
+    log_dir = tmp_path / ".gemini" / "antigravity" / "brain" / cid / ".system_generated" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    t_file = log_dir / "transcript.jsonl"
+    t_file.write_text("")
+
+    controller = Antigravity2Controller(
+        executable_path=tmp_path / "ls",
+        db_path=None,
+        hub_address=None,
+        hub_csrf_token=None,
+    )
+
+    with pytest.raises(TimeoutError) as exc_info:
+        await controller.wait_for_model_reply(
+            conversation_id=cid,
+            after_step_index=0,
+            inactivity_timeout_secs=0.5,
+            max_timeout_secs=10.0,
+        )
+    assert "Timed out due to inactivity" in str(exc_info.value)
