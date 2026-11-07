@@ -19,6 +19,7 @@ from .transcript import (
     LastTurnSummary,
     ProgressStepItem,
     StepTracker,
+    ToolApprovalPrompt,
     TranscriptStep,
     get_last_turn_summary,
     get_steps_from_transcript,
@@ -579,6 +580,132 @@ class Antigravity2Controller:
 
         return False
 
+    def send_tool_approval(
+        self,
+        conversation_id: str,
+        step_index: int,
+        allow: bool,
+        trajectory_id: str | None = None,
+    ) -> bool:
+        if not self.hub_address:
+            logger.error("Cannot send tool approval: hub_address is missing")
+            return False
+
+        url = f"http://{self.hub_address}/exa.language_server_pb.LanguageServerService/HandleCascadeUserInteraction"
+        headers = {
+            "Content-Type": "application/json",
+            "Connect-Protocol-Version": "1",
+            "x-codeium-csrf-token": self.hub_csrf_token or "",
+        }
+
+        traj_id = trajectory_id or self.get_trajectory_id(conversation_id)
+
+        import urllib.error
+        import urllib.request
+
+        candidate_steps = [step_index, step_index + 1, step_index - 1]
+        for target_step in candidate_steps:
+            if target_step < 0:
+                continue
+
+            payload: dict[str, Any] = {
+                "cascadeId": conversation_id,
+                "interaction": {
+                    "stepIndex": target_step,
+                    "interaction": {
+                        "case": "approvalInteraction",
+                        "value": {
+                            "confirm": allow,
+                        },
+                    },
+                },
+            }
+            if traj_id:
+                payload["interaction"]["trajectoryId"] = traj_id
+
+            try:
+                data_bytes = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
+                with urllib.request.urlopen(req, timeout=5) as res:
+                    if res.status in (200, 204):
+                        logger.info(
+                            "Tool approval sent successfully: conv=%s, step=%d, allow=%s",
+                            conversation_id,
+                            target_step,
+                            allow,
+                        )
+                        return True
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", "ignore")
+                logger.debug(
+                    "HandleCascadeUserInteraction approval failed for step %d (code %d): %s",
+                    target_step,
+                    e.code,
+                    err_body,
+                )
+                if (
+                    "input not registered for step" in err_body
+                    and target_step != candidate_steps[-1]
+                ):
+                    continue
+                return False
+            except Exception as e:
+                logger.error("Failed to send tool approval to hub: %s", e)
+                return False
+
+        return False
+
+    def query_waiting_approval(self, conversation_id: str) -> ToolApprovalPrompt | None:
+        if not self.hub_address:
+            return None
+
+        url = f"http://{self.hub_address}/exa.language_server_pb.LanguageServerService/GetCascadeTrajectory"
+        headers = {
+            "Content-Type": "application/json",
+            "Connect-Protocol-Version": "1",
+            "x-codeium-csrf-token": self.hub_csrf_token or "",
+        }
+
+        import urllib.error
+        import urllib.request
+
+        payload = {"cascadeId": conversation_id}
+        try:
+            req = urllib.request.Request(
+                url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=3) as res:
+                if res.status == 200:
+                    data = json.loads(res.read().decode("utf-8"))
+                    traj = data.get("trajectory") or {}
+                    traj_id = traj.get("trajectoryId", "")
+                    steps = traj.get("steps") or []
+                    if steps:
+                        last_step = steps[-1]
+                        if last_step.get("status") == "CORTEX_STEP_STATUS_WAITING":
+                            req_ia = last_step.get("requestedInteraction") or {}
+                            perm = req_ia.get("permission") or {}
+                            res_obj = perm.get("resource") or {}
+                            action = res_obj.get("action", "command")
+                            target = res_obj.get("target", "")
+                            desc = perm.get("actionDescription", "")
+                            shell = perm.get("shellName", "")
+                            step_idx = (
+                                last_step.get("sourceTrajectoryStepInfo", {}).get("stepIndex")
+                                or len(steps) - 1
+                            )
+                            return ToolApprovalPrompt(
+                                step_index=step_idx,
+                                action=action,
+                                target=target,
+                                description=desc,
+                                shell_name=shell,
+                                trajectory_id=traj_id,
+                            )
+        except Exception as e:
+            logger.debug("Failed to query waiting approval for conv %s: %s", conversation_id, e)
+        return None
+
     def get_last_step_index(self, conversation_id: str) -> int:
         transcript_path = get_transcript_path(conversation_id)
         if not transcript_path.is_file():
@@ -611,6 +738,7 @@ class Antigravity2Controller:
         progress_callback: Callable[[str], None] | None = None,
         step_callback: Callable[[TranscriptStep], None] | None = None,
         interaction_callback: Callable[[InteractionPrompt], Any] | None = None,
+        approval_callback: Callable[[ToolApprovalPrompt], Any] | None = None,
     ) -> str:
         transcript_path = get_transcript_path(conversation_id)
         logger.info(
@@ -623,10 +751,25 @@ class Antigravity2Controller:
         start_time = time.monotonic()
         tracker = StepTracker(initial_after_index=after_step_index)
         last_log_time = time.monotonic()
+        last_approval_check_time = 0.0
         notified_interaction_steps: set[int] = set()
+        notified_approval_steps: set[int] = set()
         has_pending_interaction = False
 
         while True:
+            now = time.monotonic()
+
+            # Check Hub for WAITING tool approvals every 1s if approval_callback is configured
+            if approval_callback and (now - last_approval_check_time) >= 1.0:
+                last_approval_check_time = now
+                if approval := self.query_waiting_approval(conversation_id):
+                    has_pending_interaction = True
+                    if approval.step_index not in notified_approval_steps:
+                        notified_approval_steps.add(approval.step_index)
+                        res = approval_callback(approval)
+                        if asyncio.iscoroutine(res):
+                            await res
+
             # If an interaction is waiting for human response, don't tick down the model turn timeout
             if has_pending_interaction:
                 start_time = time.monotonic()
@@ -653,6 +796,11 @@ class Antigravity2Controller:
                                 # If subsequent steps arrived, interaction has been answered or progressed
                                 if notified_interaction_steps and step.step_index > max(
                                     notified_interaction_steps
+                                ):
+                                    has_pending_interaction = False
+
+                                if notified_approval_steps and step.step_index > max(
+                                    notified_approval_steps
                                 ):
                                     has_pending_interaction = False
 

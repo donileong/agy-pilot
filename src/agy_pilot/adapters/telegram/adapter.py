@@ -41,6 +41,7 @@ from agy_pilot.transcript import (
     InteractionPrompt,
     ProgressStepItem,
     StepTracker,
+    ToolApprovalPrompt,
     TranscriptStep,
     extract_run_recap,
     format_steps_summary,
@@ -55,6 +56,7 @@ from .keyboards import (
     build_projects_keyboard,
     build_skill_detail_keyboard,
     build_skills_keyboard,
+    build_tool_approval_keyboard,
     format_switch_message_and_keyboard,
 )
 from .middleware import AuthMiddleware
@@ -700,6 +702,46 @@ class TelegramAdapter(BaseIMAdapter):
                     )
                 return
 
+            if data.startswith("appr:"):
+                parts = data.split(":")
+                step_idx = int(parts[1])
+                decision = parts[2]  # "allow" or "deny"
+                allow = decision == "allow"
+                active_conv = await self.store.get_conversation_id()
+                if not active_conv:
+                    await query.answer("No active conversation found", show_alert=True)
+                    return
+
+                success = self.controller.send_tool_approval(
+                    conversation_id=active_conv,
+                    step_index=step_idx,
+                    allow=allow,
+                )
+                if success:
+                    await query.answer(f"Permission {'granted' if allow else 'denied'}")
+                    if query.message:
+                        orig_text = query.message.text or ""
+                        badge = (
+                            "✅ *Permission Granted (Allow Once)*"
+                            if allow
+                            else "❌ *Permission Denied*"
+                        )
+                        updated_text = (
+                            f"{orig_text}\n\n{badge}\n⚡️ Antigravity is continuing execution..."
+                        )
+                        try:
+                            await query.message.edit_text(
+                                updated_text,
+                                parse_mode=ParseMode.MARKDOWN,
+                            )
+                        except Exception:
+                            pass
+                else:
+                    await query.answer(
+                        "Approval submission failed, please confirm on desktop", show_alert=True
+                    )
+                return
+
             if data.startswith("steps:") or data.startswith("trace:"):
                 cached_steps: list[ProgressStepItem] = []
                 elapsed_val: float | None = None
@@ -1004,6 +1046,18 @@ class TelegramAdapter(BaseIMAdapter):
             except Exception as e:
                 logger.error("Failed to send interaction message to Telegram: %s", e)
 
+        async def on_approval(approval: ToolApprovalPrompt) -> None:
+            text, kb = build_tool_approval_keyboard(approval, conv_id)
+            try:
+                await self.bot.send_message(
+                    chat_id=item.chat_id,
+                    text=text,
+                    reply_markup=kb,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            except Exception as e:
+                logger.error("Failed to send approval message to Telegram: %s", e)
+
         try:
             reply = await self.controller.wait_for_model_reply(
                 conversation_id=conv_id,
@@ -1012,6 +1066,7 @@ class TelegramAdapter(BaseIMAdapter):
                 progress_callback=lambda board: heartbeat.update_status(board),
                 step_callback=on_step,
                 interaction_callback=on_interaction,
+                approval_callback=on_approval,
             )
         except Exception as e:
             elapsed = time.monotonic() - start_time

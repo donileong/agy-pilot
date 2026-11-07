@@ -288,3 +288,47 @@ async def test_callback_query_interaction_response(tmp_path):
     query.answer.assert_called_with("Selection submitted")
     query.message.edit_text.assert_called()
     assert "Fast Plan" in query.message.edit_text.call_args[0][0]
+
+
+def test_tool_approval_prompt_and_send():
+    from pathlib import Path
+
+    from agy_pilot.adapters.telegram.keyboards import build_tool_approval_keyboard
+    from agy_pilot.transcript import ToolApprovalPrompt
+
+    prompt = ToolApprovalPrompt(
+        step_index=42,
+        action="command",
+        target="python3 -c 'print(1)'",
+        description="Run test script",
+        trajectory_id="traj-123",
+    )
+
+    text, kb = build_tool_approval_keyboard(prompt, "conv-123")
+    assert "Run test script" in text
+    assert "python3 -c 'print(1)'" in text
+    assert len(kb.inline_keyboard) == 1
+    assert kb.inline_keyboard[0][0].callback_data == "appr:42:allow"
+    assert kb.inline_keyboard[0][1].callback_data == "appr:42:deny"
+
+    ctrl = Antigravity2Controller(
+        executable_path=Path("/bin/echo"),
+        db_path=None,
+        hub_address="localhost:9999",
+        hub_csrf_token="token",
+    )
+
+    with patch("urllib.request.urlopen") as mock_open:
+        mock_res = MagicMock()
+        mock_res.status = 200
+        mock_open.return_value.__enter__.return_value = mock_res
+
+        ok = ctrl.send_tool_approval("conv-123", 42, allow=True, trajectory_id="traj-123")
+        assert ok is True
+        mock_open.assert_called_once()
+        req = mock_open.call_args[0][0]
+        data = json.loads(req.data.decode("utf-8"))
+        assert data["cascadeId"] == "conv-123"
+        assert data["interaction"]["stepIndex"] == 42
+        assert data["interaction"]["interaction"]["case"] == "approvalInteraction"
+        assert data["interaction"]["interaction"]["value"]["confirm"] is True

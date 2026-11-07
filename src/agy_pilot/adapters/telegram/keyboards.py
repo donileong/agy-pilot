@@ -4,7 +4,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from agy_pilot.controller import AntigravityProject, ConversationItem
 from agy_pilot.skills import SkillItem
-from agy_pilot.transcript import InteractionPrompt, LastTurnSummary
+from agy_pilot.transcript import InteractionPrompt, LastTurnSummary, ToolApprovalPrompt
 
 
 def build_projects_keyboard(
@@ -316,5 +316,36 @@ def build_interaction_keyboard(
                 )
             ]
         )
+
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_tool_approval_keyboard(
+    approval: ToolApprovalPrompt, conversation_id: str
+) -> tuple[str, InlineKeyboardMarkup]:
+    lines = [
+        "🛡️ *Antigravity Permission Request:*\n",
+        f"• *Action:* `{approval.action}`",
+    ]
+    if approval.description:
+        lines.append(f"• *Task:* {approval.description}")
+    if approval.target:
+        lines.append(f"• *Target / Command:*\n```\n{approval.target}\n```")
+
+    lines.append("\nGrant permission to proceed?")
+    text = "\n".join(lines)
+
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text="✅ Allow Once",
+                callback_data=f"appr:{approval.step_index}:allow",
+            ),
+            InlineKeyboardButton(
+                text="❌ Deny",
+                callback_data=f"appr:{approval.step_index}:deny",
+            ),
+        ]
+    ]
 
     return text, InlineKeyboardMarkup(inline_keyboard=buttons)

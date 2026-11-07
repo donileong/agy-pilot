@@ -23,6 +23,16 @@ class QuestionOption:
 
 
 @dataclass
+class ToolApprovalPrompt:
+    step_index: int
+    action: str
+    target: str
+    description: str = ""
+    shell_name: str = ""
+    trajectory_id: str = ""
+
+
+@dataclass
 class InteractionPrompt:
     step_index: int
     question: str
