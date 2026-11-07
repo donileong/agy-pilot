@@ -189,7 +189,7 @@ def update_application() -> None:
     else:
         if shutil.which("uv"):
             print("Upgrading via uv tool...")
-            res_uv = os.system("uv tool upgrade agy-pilot")
+            res_uv = os.system("uv tool install --force agy-pilot@latest")
             if res_uv != 0:
                 os.system(
                     "uv tool install --reinstall git+https://github.com/donileong/agy-pilot.git"
