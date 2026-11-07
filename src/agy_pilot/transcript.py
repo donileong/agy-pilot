@@ -504,11 +504,19 @@ class FileChange:
 
 
 @dataclass
+class ExecutedCommand:
+    command: str
+    failed: bool = False
+    exit_code: int | None = None
+
+
+@dataclass
 class RunRecap:
     step_count: int = 0
     duration_seconds: float = 0.0
     touched_files: list[FileChange] = field(default_factory=list)
     git_diff_stat: str | None = None
+    executed_commands: list[ExecutedCommand] = field(default_factory=list)
 
     def format_markdown(self) -> str:
         lines: list[str] = []
@@ -516,27 +524,57 @@ class RunRecap:
         dur_part = f" · {dur_str}" if dur_str else ""
         step_word = "step" if self.step_count == 1 else "steps"
 
-        if not self.touched_files:
+        has_files = bool(self.touched_files)
+        has_commands = bool(self.executed_commands)
+
+        if not has_files and not has_commands:
             lines.append(
                 f"⚡️ *Run Recap* · {self.step_count} {step_word}{dur_part} · _read-only (no files modified)_"
             )
             return "\n".join(lines)
 
-        file_count = len(self.touched_files)
-        file_word = "file" if file_count == 1 else "files"
-        lines.append(
-            f"⚡️ *Run Recap* · {file_count} {file_word} touched · {self.step_count} {step_word}{dur_part}\n"
-        )
-
-        lines.append(f"📝 *Touched Files ({file_count})*")
-        max_files = 10
-        if file_count > max_files:
-            for fc in self.touched_files[:8]:
-                lines.append(f"• `{fc.path}` _({fc.action})_")
-            lines.append(f"• _...and {file_count - 8} more files_")
+        if has_files:
+            file_count = len(self.touched_files)
+            file_word = "file" if file_count == 1 else "files"
+            lines.append(
+                f"⚡️ *Run Recap* · {file_count} {file_word} touched · {self.step_count} {step_word}{dur_part}\n"
+            )
+            lines.append(f"📝 *Touched Files ({file_count})*")
+            max_files = 10
+            if file_count > max_files:
+                for fc in self.touched_files[:8]:
+                    lines.append(f"• `{fc.path}` _({fc.action})_")
+                lines.append(f"• _...and {file_count - 8} more files_")
+            else:
+                for fc in self.touched_files:
+                    lines.append(f"• `{fc.path}` _({fc.action})_")
         else:
-            for fc in self.touched_files:
-                lines.append(f"• `{fc.path}` _({fc.action})_")
+            cmd_count = len(self.executed_commands)
+            cmd_word = "command" if cmd_count == 1 else "commands"
+            lines.append(
+                f"⚡️ *Run Recap* · {cmd_count} {cmd_word} run · {self.step_count} {step_word}{dur_part}\n"
+            )
+
+        if has_commands:
+            if has_files:
+                lines.append("")
+            cmd_count = len(self.executed_commands)
+            lines.append(f"⚙️ *Executed Commands ({cmd_count})*")
+            max_cmds = 5
+            display_cmds = self.executed_commands[:max_cmds]
+            for ec in display_cmds:
+                if ec.failed:
+                    if ec.exit_code is not None:
+                        fail_mark = f" ❌ (exit {ec.exit_code})"
+                    else:
+                        fail_mark = " ❌"
+                else:
+                    fail_mark = ""
+                lines.append(f"• `{ec.command}`{fail_mark}")
+            if cmd_count > max_cmds:
+                rem = cmd_count - max_cmds
+                rem_word = "command" if rem == 1 else "commands"
+                lines.append(f"• _...and {rem} more {rem_word}_")
 
         if self.git_diff_stat:
             lines.append(f"\n📊 *Git Diff Stats*\n```text\n{self.git_diff_stat}\n```")
@@ -623,6 +661,42 @@ def get_git_diff_stat(repo_dir: Path | str | None, max_lines: int = 10) -> str |
         return None
 
 
+SHELL_TOOL_NAMES: set[str] = {
+    "run_command",
+    "bash",
+    "execute_command",
+    "terminal",
+}
+
+
+def _extract_command_string(args: dict[str, Any]) -> str | None:
+    # Prefer concise toolSummary if provided
+    for summary_key in ("toolSummary", "toolAction"):
+        if summary_val := args.get(summary_key):
+            if isinstance(summary_val, str) and summary_val.strip():
+                summary_line = summary_val.strip().splitlines()[0]
+                if len(summary_line) > 50:
+                    summary_line = f"{summary_line[:47]}..."
+                return summary_line
+
+    for key in ("CommandLine", "command", "cmd"):
+        if val := args.get(key):
+            if isinstance(val, str) and val.strip():
+                # Strip outermost quotes if present (e.g., "\"git status\"")
+                cleaned = val.strip()
+                if (cleaned.startswith('"') and cleaned.endswith('"')) or (
+                    cleaned.startswith("'") and cleaned.endswith("'")
+                ):
+                    cleaned = cleaned[1:-1].strip()
+                # Take the first non-empty line
+                first_line = cleaned.splitlines()[0] if cleaned.splitlines() else cleaned
+                first_line = first_line.strip()
+                if len(first_line) > 50:
+                    first_line = f"{first_line[:47]}..."
+                return first_line
+    return None
+
+
 def extract_run_recap(
     steps: list[TranscriptStep] | list[dict[str, Any]],
     duration_seconds: float = 0.0,
@@ -640,8 +714,9 @@ def extract_run_recap(
 
     actual_step_count = step_count if step_count is not None else len(parsed_steps)
     touched: dict[str, FileChange] = {}
+    commands: dict[str, ExecutedCommand] = {}
 
-    for step in parsed_steps:
+    for idx, step in enumerate(parsed_steps):
         for tc in step.tool_calls:
             t_name = tc.name
             t_args = tc.args or {}
@@ -672,6 +747,37 @@ def extract_run_recap(
                     elif touched[norm_path].action != "created":
                         touched[norm_path].action = action
 
+            elif t_name in SHELL_TOOL_NAMES:
+                cmd_str = _extract_command_string(t_args)
+                if cmd_str:
+                    failed = False
+                    exit_code: int | None = None
+                    if step.status == "ERROR":
+                        failed = True
+
+                    # Scan subsequent generic/response steps for tool outcome
+                    for next_step in parsed_steps[idx + 1 : idx + 3]:
+                        if next_step.status == "ERROR":
+                            failed = True
+                        if next_step.content:
+                            if m := re.search(
+                                r"Command exited with code ([1-9]\d*)", next_step.content
+                            ):
+                                failed = True
+                                exit_code = int(m.group(1))
+                            elif "Command exited with code 0" in next_step.content:
+                                break
+
+                    if cmd_str in commands:
+                        if failed:
+                            commands[cmd_str].failed = True
+                            if exit_code is not None:
+                                commands[cmd_str].exit_code = exit_code
+                    else:
+                        commands[cmd_str] = ExecutedCommand(
+                            command=cmd_str, failed=failed, exit_code=exit_code
+                        )
+
     git_diff: str | None = None
     if include_git_diff and workspace_dir:
         git_diff = get_git_diff_stat(workspace_dir)
@@ -681,4 +787,5 @@ def extract_run_recap(
         duration_seconds=duration_seconds,
         touched_files=list(touched.values()),
         git_diff_stat=git_diff,
+        executed_commands=list(commands.values()),
     )
