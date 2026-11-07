@@ -31,6 +31,35 @@ class ToolApprovalPrompt:
     shell_name: str = ""
     trajectory_id: str = ""
 
+    @classmethod
+    def from_step_dict(
+        cls,
+        step_data: dict[str, Any],
+        default_step_index: int = 0,
+        trajectory_id: str = "",
+    ) -> ToolApprovalPrompt | None:
+        """Create ToolApprovalPrompt from a trajectory step dictionary if waiting for permission."""
+        if step_data.get("status") != "CORTEX_STEP_STATUS_WAITING":
+            return None
+        req_ia = step_data.get("requestedInteraction") or {}
+        perm = req_ia.get("permission") or {}
+        res_obj = perm.get("resource") or {}
+        action = res_obj.get("action", "command")
+        target = res_obj.get("target", "")
+        desc = perm.get("actionDescription", "")
+        shell = perm.get("shellName", "")
+        step_idx = (
+            step_data.get("sourceTrajectoryStepInfo", {}).get("stepIndex") or default_step_index
+        )
+        return cls(
+            step_index=step_idx,
+            action=action,
+            target=target,
+            description=desc,
+            shell_name=shell,
+            trajectory_id=trajectory_id,
+        )
+
 
 @dataclass
 class InteractionPrompt:
@@ -336,30 +365,22 @@ def get_steps_from_transcript(
     return tracker.steps
 
 
-def get_transcript_path(conversation_id: str) -> Path:
+def get_conversation_dir(conversation_id: str) -> Path:
+    """Return the root directory for a given conversation ID inside the brain store."""
     home = Path.home()
     candidates = [
-        home
-        / ".gemini"
-        / "antigravity"
-        / "brain"
-        / conversation_id
-        / ".system_generated"
-        / "logs"
-        / "transcript.jsonl",
-        home
-        / ".gemini"
-        / "antigravity-ide"
-        / "brain"
-        / conversation_id
-        / ".system_generated"
-        / "logs"
-        / "transcript.jsonl",
+        home / ".gemini" / "antigravity" / "brain" / conversation_id,
+        home / ".gemini" / "antigravity-ide" / "brain" / conversation_id,
     ]
     for c in candidates:
         if c.exists():
             return c
     return candidates[0]
+
+
+def get_transcript_path(conversation_id: str) -> Path:
+    base = get_conversation_dir(conversation_id)
+    return base / ".system_generated" / "logs" / "transcript.jsonl"
 
 
 @dataclass

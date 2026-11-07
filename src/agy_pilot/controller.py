@@ -502,17 +502,6 @@ class Antigravity2Controller:
         question_text: str = "",
         options: list[str] | None = None,
     ) -> bool:
-        if not self.hub_address:
-            logger.error("Cannot send user interaction: hub_address is missing")
-            return False
-
-        url = f"http://{self.hub_address}/exa.language_server_pb.LanguageServerService/HandleCascadeUserInteraction"
-        headers = {
-            "Content-Type": "application/json",
-            "Connect-Protocol-Version": "1",
-            "x-codeium-csrf-token": self.hub_csrf_token or "",
-        }
-
         trajectory_id = self.get_trajectory_id(conversation_id)
 
         response_dict: dict[str, Any] = {
@@ -526,21 +515,70 @@ class Antigravity2Controller:
             response_dict["options"] = options
 
         candidate_steps = [step_index + 1, step_index]
+        value = {
+            "cancelled": False,
+            "responses": [response_dict],
+        }
+
+        return self._dispatch_cascade_interaction(
+            conversation_id=conversation_id,
+            case_name="askQuestion",
+            value_dict=value,
+            candidate_steps=candidate_steps,
+            trajectory_id=trajectory_id,
+        )
+
+    def send_tool_approval(
+        self,
+        conversation_id: str,
+        step_index: int,
+        allow: bool,
+        trajectory_id: str | None = None,
+    ) -> bool:
+        traj_id = trajectory_id or self.get_trajectory_id(conversation_id)
+        candidate_steps = [step_index, step_index + 1, step_index - 1]
+        value = {"confirm": allow}
+        return self._dispatch_cascade_interaction(
+            conversation_id=conversation_id,
+            case_name="approvalInteraction",
+            value_dict=value,
+            candidate_steps=candidate_steps,
+            trajectory_id=traj_id,
+        )
+
+    def _dispatch_cascade_interaction(
+        self,
+        conversation_id: str,
+        case_name: str,
+        value_dict: dict[str, Any],
+        candidate_steps: list[int],
+        trajectory_id: str | None = None,
+    ) -> bool:
+        if not self.hub_address:
+            logger.error("Cannot dispatch cascade interaction: hub_address is missing")
+            return False
+
+        url = f"http://{self.hub_address}/exa.language_server_pb.LanguageServerService/HandleCascadeUserInteraction"
+        headers = {
+            "Content-Type": "application/json",
+            "Connect-Protocol-Version": "1",
+            "x-codeium-csrf-token": self.hub_csrf_token or "",
+        }
 
         import urllib.error
         import urllib.request
 
         for target_step in candidate_steps:
+            if target_step < 0:
+                continue
+
             payload: dict[str, Any] = {
                 "cascadeId": conversation_id,
                 "interaction": {
                     "stepIndex": target_step,
                     "interaction": {
-                        "case": "askQuestion",
-                        "value": {
-                            "cancelled": False,
-                            "responses": [response_dict],
-                        },
+                        "case": case_name,
+                        "value": value_dict,
                     },
                 },
             }
@@ -553,92 +591,18 @@ class Antigravity2Controller:
                 with urllib.request.urlopen(req, timeout=5) as res:
                     if res.status in (200, 204):
                         logger.info(
-                            "User interaction sent successfully: conv=%s, step=%d, opt=%d, trajectory=%s",
+                            "Cascade interaction (%s) sent successfully: conv=%s, step=%d, trajectory=%s",
+                            case_name,
                             conversation_id,
                             target_step,
-                            selected_option_index,
                             trajectory_id,
                         )
                         return True
             except urllib.error.HTTPError as e:
                 err_body = e.read().decode("utf-8", "ignore")
-                logger.warning(
-                    "HandleCascadeUserInteraction failed for step %d (code %d): %s",
-                    target_step,
-                    e.code,
-                    err_body,
-                )
-                if (
-                    "input not registered for step" in err_body
-                    and target_step != candidate_steps[-1]
-                ):
-                    continue
-                return False
-            except Exception as e:
-                logger.error("Failed to send user interaction to hub: %s", e)
-                return False
-
-        return False
-
-    def send_tool_approval(
-        self,
-        conversation_id: str,
-        step_index: int,
-        allow: bool,
-        trajectory_id: str | None = None,
-    ) -> bool:
-        if not self.hub_address:
-            logger.error("Cannot send tool approval: hub_address is missing")
-            return False
-
-        url = f"http://{self.hub_address}/exa.language_server_pb.LanguageServerService/HandleCascadeUserInteraction"
-        headers = {
-            "Content-Type": "application/json",
-            "Connect-Protocol-Version": "1",
-            "x-codeium-csrf-token": self.hub_csrf_token or "",
-        }
-
-        traj_id = trajectory_id or self.get_trajectory_id(conversation_id)
-
-        import urllib.error
-        import urllib.request
-
-        candidate_steps = [step_index, step_index + 1, step_index - 1]
-        for target_step in candidate_steps:
-            if target_step < 0:
-                continue
-
-            payload: dict[str, Any] = {
-                "cascadeId": conversation_id,
-                "interaction": {
-                    "stepIndex": target_step,
-                    "interaction": {
-                        "case": "approvalInteraction",
-                        "value": {
-                            "confirm": allow,
-                        },
-                    },
-                },
-            }
-            if traj_id:
-                payload["interaction"]["trajectoryId"] = traj_id
-
-            try:
-                data_bytes = json.dumps(payload).encode("utf-8")
-                req = urllib.request.Request(url, data=data_bytes, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=5) as res:
-                    if res.status in (200, 204):
-                        logger.info(
-                            "Tool approval sent successfully: conv=%s, step=%d, allow=%s",
-                            conversation_id,
-                            target_step,
-                            allow,
-                        )
-                        return True
-            except urllib.error.HTTPError as e:
-                err_body = e.read().decode("utf-8", "ignore")
                 logger.debug(
-                    "HandleCascadeUserInteraction approval failed for step %d (code %d): %s",
+                    "HandleCascadeUserInteraction (%s) failed for step %d (code %d): %s",
+                    case_name,
                     target_step,
                     e.code,
                     err_body,
@@ -650,7 +614,7 @@ class Antigravity2Controller:
                     continue
                 return False
             except Exception as e:
-                logger.error("Failed to send tool approval to hub: %s", e)
+                logger.error("Failed to send cascade interaction (%s) to hub: %s", case_name, e)
                 return False
 
         return False
@@ -682,26 +646,11 @@ class Antigravity2Controller:
                     steps = traj.get("steps") or []
                     if steps:
                         last_step = steps[-1]
-                        if last_step.get("status") == "CORTEX_STEP_STATUS_WAITING":
-                            req_ia = last_step.get("requestedInteraction") or {}
-                            perm = req_ia.get("permission") or {}
-                            res_obj = perm.get("resource") or {}
-                            action = res_obj.get("action", "command")
-                            target = res_obj.get("target", "")
-                            desc = perm.get("actionDescription", "")
-                            shell = perm.get("shellName", "")
-                            step_idx = (
-                                last_step.get("sourceTrajectoryStepInfo", {}).get("stepIndex")
-                                or len(steps) - 1
-                            )
-                            return ToolApprovalPrompt(
-                                step_index=step_idx,
-                                action=action,
-                                target=target,
-                                description=desc,
-                                shell_name=shell,
-                                trajectory_id=traj_id,
-                            )
+                        return ToolApprovalPrompt.from_step_dict(
+                            step_data=last_step,
+                            default_step_index=len(steps) - 1,
+                            trajectory_id=traj_id,
+                        )
         except Exception as e:
             logger.debug("Failed to query waiting approval for conv %s: %s", conversation_id, e)
         return None
@@ -735,10 +684,12 @@ class Antigravity2Controller:
         conversation_id: str,
         after_step_index: int,
         timeout_secs: float = 300.0,
+        interaction_timeout_secs: float = 1800.0,
         progress_callback: Callable[[str], None] | None = None,
         step_callback: Callable[[TranscriptStep], None] | None = None,
         interaction_callback: Callable[[InteractionPrompt], Any] | None = None,
         approval_callback: Callable[[ToolApprovalPrompt], Any] | None = None,
+        dismiss_interaction_callback: Callable[[int], Any] | None = None,
     ) -> str:
         transcript_path = get_transcript_path(conversation_id)
         logger.info(
@@ -749,12 +700,24 @@ class Antigravity2Controller:
         )
 
         start_time = time.monotonic()
+        interaction_start_time: float | None = None
         tracker = StepTracker(initial_after_index=after_step_index)
         last_log_time = time.monotonic()
         last_approval_check_time = 0.0
         notified_interaction_steps: set[int] = set()
         notified_approval_steps: set[int] = set()
         has_pending_interaction = False
+        last_file_offset: int = 0
+
+        async def _dismiss_steps_up_to(current_step_idx: int) -> None:
+            if not dismiss_interaction_callback:
+                return
+            all_notified = list(notified_interaction_steps | notified_approval_steps)
+            for s_idx in all_notified:
+                if s_idx < current_step_idx:
+                    res = dismiss_interaction_callback(s_idx)
+                    if asyncio.iscoroutine(res):
+                        await res
 
         while True:
             now = time.monotonic()
@@ -763,62 +726,85 @@ class Antigravity2Controller:
             if approval_callback and (now - last_approval_check_time) >= 1.0:
                 last_approval_check_time = now
                 if approval := self.query_waiting_approval(conversation_id):
-                    has_pending_interaction = True
+                    if not has_pending_interaction:
+                        has_pending_interaction = True
+                        interaction_start_time = now
                     if approval.step_index not in notified_approval_steps:
                         notified_approval_steps.add(approval.step_index)
                         res = approval_callback(approval)
                         if asyncio.iscoroutine(res):
                             await res
 
-            # If an interaction is waiting for human response, don't tick down the model turn timeout
+            # Check interaction timeout ceiling
             if has_pending_interaction:
                 start_time = time.monotonic()
-            elif (time.monotonic() - start_time) >= timeout_secs:
+                if (
+                    interaction_start_time is not None
+                    and (now - interaction_start_time) >= interaction_timeout_secs
+                ):
+                    raise TimeoutError(
+                        f"Timed out waiting for user interaction/approval in conversation {conversation_id} after {interaction_timeout_secs}s"
+                    )
+            elif (now - start_time) >= timeout_secs:
                 break
 
             if transcript_path.is_file():
                 try:
-                    with transcript_path.open("r", encoding="utf-8", errors="replace") as f:
-                        for line in f:
-                            if step := TranscriptStep.parse_line(line):
-                                if step.step_index <= after_step_index:
-                                    continue
+                    file_size = transcript_path.stat().st_size
+                    if file_size < last_file_offset:
+                        # File was truncated/recreated, reset offset
+                        last_file_offset = 0
 
-                                if prompt := step.get_ask_question_prompt():
-                                    has_pending_interaction = True
-                                    if step.step_index not in notified_interaction_steps:
-                                        notified_interaction_steps.add(step.step_index)
-                                        if interaction_callback:
-                                            res = interaction_callback(prompt)
-                                            if asyncio.iscoroutine(res):
-                                                await res
+                    if file_size > last_file_offset:
+                        with transcript_path.open("r", encoding="utf-8", errors="replace") as f:
+                            f.seek(last_file_offset)
+                            for line in f:
+                                if step := TranscriptStep.parse_line(line):
+                                    if step.step_index <= after_step_index:
+                                        continue
 
-                                # If subsequent steps arrived, interaction has been answered or progressed
-                                if notified_interaction_steps and step.step_index > max(
-                                    notified_interaction_steps
-                                ):
-                                    has_pending_interaction = False
+                                    if prompt := step.get_ask_question_prompt():
+                                        if not has_pending_interaction:
+                                            has_pending_interaction = True
+                                            interaction_start_time = time.monotonic()
+                                        if step.step_index not in notified_interaction_steps:
+                                            notified_interaction_steps.add(step.step_index)
+                                            if interaction_callback:
+                                                res = interaction_callback(prompt)
+                                                if asyncio.iscoroutine(res):
+                                                    await res
 
-                                if notified_approval_steps and step.step_index > max(
-                                    notified_approval_steps
-                                ):
-                                    has_pending_interaction = False
+                                    # If subsequent steps arrived, notify dismissal of prior interactions
+                                    if notified_interaction_steps and step.step_index > max(
+                                        notified_interaction_steps
+                                    ):
+                                        has_pending_interaction = False
+                                        interaction_start_time = None
+                                        await _dismiss_steps_up_to(step.step_index)
 
-                                if tracker.process_step(step):
-                                    elapsed = int(time.monotonic() - start_time)
-                                    if progress_callback:
-                                        live_board = tracker.format_live_markdown(elapsed)
-                                        progress_callback(live_board)
-                                    if step_callback:
-                                        step_callback(step)
+                                    if notified_approval_steps and step.step_index > max(
+                                        notified_approval_steps
+                                    ):
+                                        has_pending_interaction = False
+                                        interaction_start_time = None
+                                        await _dismiss_steps_up_to(step.step_index)
 
-                                if final_text := step.is_final_reply():
-                                    logger.info(
-                                        "Model produced final reply: step=%d, len=%d",
-                                        step.step_index,
-                                        len(final_text),
-                                    )
-                                    return final_text
+                                    if tracker.process_step(step):
+                                        elapsed = int(time.monotonic() - start_time)
+                                        if progress_callback:
+                                            live_board = tracker.format_live_markdown(elapsed)
+                                            progress_callback(live_board)
+                                        if step_callback:
+                                            step_callback(step)
+
+                                    if final_text := step.is_final_reply():
+                                        logger.info(
+                                            "Model produced final reply: step=%d, len=%d",
+                                            step.step_index,
+                                            len(final_text),
+                                        )
+                                        return final_text
+                            last_file_offset = f.tell()
                 except Exception as e:
                     logger.warning("Error reading transcript during poll: %s", e)
             elif (time.monotonic() - last_log_time) >= 10.0:

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -538,3 +539,115 @@ async def test_wait_for_model_reply_pauses_timeout_during_interaction(tmp_path, 
 
     result = await asyncio.wait_for(task, timeout=2.0)
     assert result == "Answer received, finished."
+
+
+@pytest.mark.asyncio
+async def test_wait_for_model_reply_interaction_ceiling_timeout(tmp_path, monkeypatch):
+    cid = "test-conv-ceiling-timeout"
+    logs_dir = (
+        Path.home() / ".gemini" / "antigravity" / "brain" / cid / ".system_generated" / "logs"
+    )
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    t_file = logs_dir / "transcript.jsonl"
+
+    step1 = {
+        "step_index": 1,
+        "source": "MODEL",
+        "type": "PLANNER_RESPONSE",
+        "status": "RUNNING",
+        "tool_calls": [
+            {
+                "name": "ask_question",
+                "args": {
+                    "questions": [
+                        {
+                            "question": "Which option?",
+                            "options": ["A", "B"],
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+    t_file.write_text(json.dumps(step1) + "\n")
+
+    controller = Antigravity2Controller(
+        executable_path=tmp_path / "ls",
+        db_path=None,
+        hub_address=None,
+        hub_csrf_token=None,
+    )
+
+    with pytest.raises(TimeoutError, match="Timed out waiting for user interaction/approval"):
+        await controller.wait_for_model_reply(
+            conversation_id=cid,
+            after_step_index=0,
+            timeout_secs=0.5,
+            interaction_timeout_secs=0.3,  # Short ceiling
+        )
+
+
+@pytest.mark.asyncio
+async def test_wait_for_model_reply_dismiss_interaction_callback(tmp_path, monkeypatch):
+    cid = "test-conv-dismiss-callback"
+    logs_dir = (
+        Path.home() / ".gemini" / "antigravity" / "brain" / cid / ".system_generated" / "logs"
+    )
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    t_file = logs_dir / "transcript.jsonl"
+
+    step1 = {
+        "step_index": 1,
+        "source": "MODEL",
+        "type": "PLANNER_RESPONSE",
+        "status": "RUNNING",
+        "tool_calls": [
+            {
+                "name": "ask_question",
+                "args": {
+                    "questions": [
+                        {
+                            "question": "Which option?",
+                            "options": ["A", "B"],
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+    t_file.write_text(json.dumps(step1) + "\n")
+
+    controller = Antigravity2Controller(
+        executable_path=tmp_path / "ls",
+        db_path=None,
+        hub_address=None,
+        hub_csrf_token=None,
+    )
+
+    dismissed = []
+
+    async def run_wait():
+        return await controller.wait_for_model_reply(
+            conversation_id=cid,
+            after_step_index=0,
+            timeout_secs=2.0,
+            dismiss_interaction_callback=lambda idx: dismissed.append(idx),
+        )
+
+    task = asyncio.create_task(run_wait())
+    await asyncio.sleep(0.4)
+
+    # Subsequent step arrives resolving interaction on desktop
+    step2 = {
+        "step_index": 2,
+        "source": "MODEL",
+        "type": "PLANNER_RESPONSE",
+        "status": "DONE",
+        "content": "Progressed from desktop.",
+    }
+    with t_file.open("a") as f:
+        f.write(json.dumps(step2) + "\n")
+
+    result = await asyncio.wait_for(task, timeout=2.0)
+    assert result == "Progressed from desktop."
+    assert 1 in dismissed

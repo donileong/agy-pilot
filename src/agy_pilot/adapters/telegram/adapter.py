@@ -45,7 +45,7 @@ from agy_pilot.transcript import (
     TranscriptStep,
     extract_run_recap,
     format_steps_summary,
-    get_transcript_path,
+    get_conversation_dir,
 )
 
 from .heartbeat import StatusHeartbeat
@@ -140,6 +140,7 @@ class TelegramAdapter(BaseIMAdapter):
         self.queue: asyncio.Queue[QueueItem] = asyncio.Queue(maxsize=50)
         self._worker_task: asyncio.Task | None = None
         self._pending_interactions: dict[str, InteractionPrompt] = {}
+        self._posted_interaction_messages: dict[int, tuple[int, int]] = {}
         self._traces: dict[str, tuple[str, int, list[ProgressStepItem], float | None]] = {}
         self._pending_skills: dict[int, tuple[SkillItem, float]] = {}
 
@@ -185,12 +186,9 @@ class TelegramAdapter(BaseIMAdapter):
         target_dir = self.config.downloads_dir
         if conversation_id:
             try:
-                transcript_path = get_transcript_path(conversation_id)
-                # transcript_path is brain/<conv_id>/.system_generated/logs/transcript.jsonl
-                # brain_dir is brain/<conv_id>
-                brain_dir = transcript_path.parent.parent.parent
-                if brain_dir.is_dir():
-                    user_upload_dir = brain_dir / ".user_uploaded"
+                conv_dir = get_conversation_dir(conversation_id)
+                if conv_dir.is_dir():
+                    user_upload_dir = conv_dir / ".user_uploaded"
                     user_upload_dir.mkdir(parents=True, exist_ok=True)
                     target_dir = user_upload_dir
             except Exception as e:
@@ -1037,11 +1035,15 @@ class TelegramAdapter(BaseIMAdapter):
             self._pending_interactions[f"{conv_id}:{prompt.step_index}"] = prompt
             text, kb = build_interaction_keyboard(prompt, conv_id)
             try:
-                await self.bot.send_message(
+                sent = await self.bot.send_message(
                     chat_id=item.chat_id,
                     text=text,
                     reply_markup=kb,
                     parse_mode=ParseMode.MARKDOWN,
+                )
+                self._posted_interaction_messages[prompt.step_index] = (
+                    item.chat_id,
+                    sent.message_id,
                 )
             except Exception as e:
                 logger.error("Failed to send interaction message to Telegram: %s", e)
@@ -1049,14 +1051,30 @@ class TelegramAdapter(BaseIMAdapter):
         async def on_approval(approval: ToolApprovalPrompt) -> None:
             text, kb = build_tool_approval_keyboard(approval, conv_id)
             try:
-                await self.bot.send_message(
+                sent = await self.bot.send_message(
                     chat_id=item.chat_id,
                     text=text,
                     reply_markup=kb,
                     parse_mode=ParseMode.MARKDOWN,
                 )
+                self._posted_interaction_messages[approval.step_index] = (
+                    item.chat_id,
+                    sent.message_id,
+                )
             except Exception as e:
                 logger.error("Failed to send approval message to Telegram: %s", e)
+
+        async def on_dismiss(step_idx: int) -> None:
+            if posted := self._posted_interaction_messages.pop(step_idx, None):
+                target_chat, target_msg = posted
+                try:
+                    await self.bot.edit_message_reply_markup(
+                        chat_id=target_chat,
+                        message_id=target_msg,
+                        reply_markup=None,
+                    )
+                except Exception as e:
+                    logger.debug("Failed to remove reply markup for step %d: %s", step_idx, e)
 
         try:
             reply = await self.controller.wait_for_model_reply(
@@ -1067,6 +1085,7 @@ class TelegramAdapter(BaseIMAdapter):
                 step_callback=on_step,
                 interaction_callback=on_interaction,
                 approval_callback=on_approval,
+                dismiss_interaction_callback=on_dismiss,
             )
         except Exception as e:
             elapsed = time.monotonic() - start_time
